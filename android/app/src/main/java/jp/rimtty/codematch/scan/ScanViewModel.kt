@@ -22,6 +22,7 @@ import jp.rimtty.codematch.feature.scan.CameraPermissionState
 import jp.rimtty.codematch.feature.scan.ScanLogRecorder
 import jp.rimtty.codematch.feature.scan.ScanPhase
 import jp.rimtty.codematch.feature.scan.ScanSessionCoordinator
+import jp.rimtty.codematch.feature.scan.isBluetoothInputUsable
 import jp.rimtty.codematch.feature.scan.ScanSessionState
 import jp.rimtty.codematch.feature.scan.ScanUiAction
 import jp.rimtty.codematch.feature.scan.ScanUiState
@@ -912,10 +913,10 @@ class ScanViewModel @Inject constructor(
             sessionNameDraft = sessionNameDraft,
             sessionName = activeSessionName,
             session = session,
-            // Baseline-ready scanners must be selectable before the physical
-            // QR/Code 128 restriction is applied. Payload-ready remains the
-            // stricter adapter state used to forward scan callbacks.
-            bluetoothReady = scanner.isReadyToStartSession,
+            // A usable scanner (connected, configuration not failed; #145)
+            // is selectable even while it is still configuring. Payload-ready
+            // remains the stricter adapter state used to forward scan callbacks.
+            bluetoothReady = scanner.isBluetoothInputUsable,
             bluetoothConnected = scanner.isConnected,
             bluetoothReconnecting = scanner.connectionState is jp.rimtty.codematch.scanner.api.ConnectionState.Connecting ||
                 scanner.connectionState is jp.rimtty.codematch.scanner.api.ConnectionState.Searching ||
