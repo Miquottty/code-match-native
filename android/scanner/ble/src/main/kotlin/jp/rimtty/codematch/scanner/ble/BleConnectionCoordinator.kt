@@ -106,6 +106,22 @@ class BleConnectionCoordinator(
     val hasPhysicalLink: Boolean
         get() = activeDevice != null || pendingConnectDevice != null
 
+    /** Whether a link has been established (not merely requested). */
+    val hasEstablishedLink: Boolean
+        get() = activeDevice != null
+
+    /** Whether the current link (pending or established) is being closed. */
+    val isClosingLink: Boolean
+        get() = disconnectIntent != null
+
+    /** Whether a close request has been accepted and awaits its callback. */
+    val isCloseInFlight: Boolean
+        get() = disconnectRequestInFlight
+
+    /** The device of a requested connection that is not established yet. */
+    val connectingDevice: ScannerDevice?
+        get() = pendingConnectDevice
+
     fun setListener(listener: BleScannerListener?) {
         this.listener = listener
     }
@@ -236,6 +252,121 @@ class BleConnectionCoordinator(
             acceptedMessage = "Manual disconnect requested",
             failureMessage = "Disconnect start failed",
         )
+    }
+
+    /**
+     * Operator selection of [device] (#137). One scanner is used at a time, so
+     * choosing a scanner pre-empts every automatic recovery of the previous
+     * one: the selection becomes the known/preferred device at once (failure
+     * retries then target it), the reconnect timer and budget are cleared, a
+     * running discovery is stopped, a requested but not yet established link
+     * to another scanner is closed without scheduling a reconnect, and a close
+     * already in flight no longer reconnects the old scanner.
+     *
+     * The caller still connects [device] itself once no link remains. Returns
+     * false, without changing anything, while an established link is not
+     * being closed (the operator must disconnect it first), or when the
+     * identity cannot be persisted.
+     */
+    fun preferSelectedDevice(device: ScannerDevice): Boolean {
+        if (activeDevice != null && disconnectIntent == null) return false
+        if (!rememberKnownDevice(device)) {
+            transition(
+                connection = BleConnectionState.Failed(
+                    "Known scanner identity could not be saved",
+                ),
+                configuration = ConfigurationState.Unavailable,
+            )
+            return false
+        }
+        preferredDevice = device
+        if (!mutableDevices.containsKey(device.id)) {
+            mutableDevices[device.id] = BleDiscoveredDevice(device)
+        }
+        reconnectAtMillis = null
+        reconnectAttempt = 0
+        if (connectionState == BleConnectionState.Searching) stopDiscovery()
+        val pending = pendingConnectDevice
+        if (activeDevice == null && pending != null && pending.id != device.id &&
+            !disconnectRequestInFlight
+        ) {
+            requestPhysicalDisconnect(
+                device = pending,
+                intent = DisconnectIntent.MANUAL,
+                failureReason = "Bluetooth disconnect could not start",
+                acceptedMessage = "Pending connection cancelled for the selected scanner",
+                failureMessage = "Pending connection cancel failed",
+            )
+        }
+        if (disconnectIntent == DisconnectIntent.RECONNECT) {
+            // A reset of the previous scanner must not turn into its reconnect.
+            disconnectIntent = DisconnectIntent.MANUAL
+            manualDisconnect = true
+        }
+        diagnostics.connection("Scanner selected by the operator")
+        emitState()
+        return true
+    }
+
+    /**
+     * Close a requested but not yet established link on the operator's behalf
+     * (for example to search while an automatic reconnect is pending). No
+     * reconnect is scheduled for it. Returns false when there is no such link.
+     */
+    fun cancelPendingConnection(): Boolean {
+        val pending = pendingConnectDevice ?: return false
+        if (activeDevice != null) return false
+        reconnectAtMillis = null
+        reconnectAttempt = 0
+        if (disconnectIntent != null) {
+            disconnectIntent = DisconnectIntent.MANUAL
+            manualDisconnect = true
+            if (disconnectRequestInFlight) return true
+        }
+        return requestPhysicalDisconnect(
+            device = pending,
+            intent = DisconnectIntent.MANUAL,
+            failureReason = "Bluetooth disconnect could not start",
+            acceptedMessage = "Pending connection cancelled",
+            failureMessage = "Pending connection cancel failed",
+        )
+    }
+
+    /**
+     * Stop treating [deviceId] as the known scanner: automatic reconnects to
+     * it end and its persisted identity is cleared. Used when a scanner is
+     * expected to come back under another identity (GATT mode switch).
+     */
+    fun forgetKnownDevice(deviceId: String) {
+        if (preferredDevice?.id == deviceId) {
+            preferredDevice = null
+            reconnectAtMillis = null
+            reconnectAttempt = 0
+        }
+        val store = knownDeviceStore ?: return
+        val result = runCatching { store.clear(expectedDeviceId = deviceId) }.getOrNull()
+        if (result == BleKnownDeviceClearResult.Cleared) {
+            knownDeviceReadResult = BleKnownDeviceReadResult.Missing
+        }
+    }
+
+    /**
+     * Publish an operator-facing failure while no link exists (for example
+     * when a renamed scanner must be picked from the search results).
+     */
+    fun publishFailure(reason: String): Boolean {
+        if (hasPhysicalLink) return false
+        transition(
+            connection = BleConnectionState.Failed(reason),
+            configuration = ConfigurationState.Unavailable,
+        )
+        return true
+    }
+
+    /** Append a payload-free adapter diagnostic and publish it. */
+    fun recordDiagnostic(message: String, error: Boolean = false) {
+        if (error) diagnostics.error(message) else diagnostics.connection(message)
+        emitState()
     }
 
     fun reconnectKnownDevice(): Boolean {

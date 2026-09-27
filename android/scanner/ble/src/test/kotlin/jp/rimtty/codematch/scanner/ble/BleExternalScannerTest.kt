@@ -485,9 +485,10 @@ class BleExternalScannerTest {
     }
 
     @Test
-    fun selectableFacadeCannotRedirectAnActiveRestrictionToAnotherDevice() {
+    fun selectableFacadeQueuesAnotherScannerUntilTheEstablishedLinkIsClosed() {
         val transport = RecordingTransport()
-        val stack = createSelectableStack(transport)
+        val knownStore = InMemoryKnownDeviceStore(profileIdentity)
+        val stack = createSelectableStack(transport, knownStore)
         val other = ScannerDevice("scanner-other", "other scanner")
 
         assertTrue(stack.scanner.connect(device))
@@ -496,21 +497,29 @@ class BleExternalScannerTest {
         assertTrue(stack.scanner.setExpectedFormat(ScanFormat.QR))
         transport.completeWrite(0, Result.success(Unit))
 
+        // An established link is never redirected: the operator disconnects first.
         assertFalse(stack.scanner.connect(other))
         assertEquals(device, stack.scanner.boundDevice)
         assertEquals(listOf(device), transport.connectCalls)
+        assertEquals(device, knownStore.load())
 
         assertTrue(stack.scanner.disconnect())
         transport.completeWrite(1, Result.success(Unit))
-        assertEquals(ConnectionState.Idle, stack.scanner.connectionState)
-        // Idle is the app-visible closing state, not proof of physical close.
-        assertFalse(stack.scanner.connect(other))
-        assertEquals(device, stack.scanner.boundDevice)
-        transport.emit(BleTransportEvent.Disconnected(device, unexpected = false))
+        // #137: a choice made while that link closes is queued, not refused.
+        // Idle is the app-visible closing state, not proof of physical close,
+        // so the old owner stays bound and nothing is connected yet.
         assertTrue(stack.scanner.connect(other))
+        assertEquals(ConnectionState.Connecting(other), stack.scanner.connectionState)
+        assertEquals(device, stack.scanner.boundDevice)
+        assertEquals(listOf(device), transport.connectCalls)
+        assertEquals(other, knownStore.load())
+
+        transport.emit(BleTransportEvent.Disconnected(device, unexpected = false))
+        stack.scanner.tick(System.currentTimeMillis())
         assertEquals(other, stack.scanner.boundDevice)
         assertEquals(listOf(device, other), transport.connectCalls)
         assertEquals(listOf(device, other), stack.createdSessions.map { it.scannerDevice })
+        assertEquals(ConnectionState.Connecting(other), stack.scanner.connectionState)
     }
 
     @Test
@@ -574,7 +583,66 @@ class BleExternalScannerTest {
     }
 
     @Test
-    fun selectableFacadeStillRefusesAnotherScannerWhileTheDroppedOneReconnects() {
+    fun operatorChoicePreemptsTheAutomaticReconnectOfTheDroppedScanner() {
+        var now = 1_000L
+        val transport = RecordingTransport()
+        val knownStore = InMemoryKnownDeviceStore(profileIdentity)
+        val stack = createSelectableStack(
+            transport,
+            knownStore,
+            nowMillis = { now },
+            reconnectDelayMillis = { 1_000L },
+        )
+        val other = ScannerDevice("scanner-other", "other scanner")
+
+        assertTrue(stack.scanner.connect(device))
+        transport.emit(BleTransportEvent.Connected(device))
+        transport.completeRead(originalSettings())
+        assertTrue(stack.scanner.setExpectedFormat(ScanFormat.QR))
+        transport.completeWrite(0, Result.success(Unit))
+
+        // A is switched off: the automatic reconnect to A is in flight.
+        transport.emit(BleTransportEvent.Disconnected(device, unexpected = true))
+        now += 1_000L
+        stack.scanner.tick(now)
+        assertEquals(ConnectionState.Connecting(device), stack.scanner.connectionState)
+        assertEquals(listOf(device, device), transport.connectCalls)
+
+        // #137: the operator's choice closes that pending attempt instead of
+        // being refused, and becomes the known device at once.
+        assertTrue(stack.scanner.connect(other))
+        assertEquals(listOf(device), transport.disconnectCalls)
+        assertEquals(other, knownStore.load())
+        assertEquals(ConnectionState.Connecting(other), stack.scanner.connectionState)
+        transport.emit(BleTransportEvent.Disconnected(device, unexpected = false))
+        now += 250L
+        stack.scanner.tick(now)
+        assertEquals(other, stack.scanner.boundDevice)
+        assertEquals(listOf(device, device, other), transport.connectCalls)
+
+        // A failed attempt is retried against the chosen scanner, never A.
+        transport.emit(BleTransportEvent.ConnectionFailed(other, "unreachable"))
+        now += 60_000L
+        stack.scanner.tick(now)
+        assertEquals(listOf(device, device, other, other), transport.connectCalls)
+        // A's pending restore stays for its next connection (#135).
+        assertNotNull(stack.snapshotStore.load(device.id))
+    }
+
+    @Test
+    fun operatorChoiceWhileTheSameScannerIsConnectingKeepsThatAttempt() {
+        val transport = RecordingTransport()
+        val stack = createSelectableStack(transport)
+
+        assertTrue(stack.scanner.connect(device))
+        assertTrue(stack.scanner.connect(device))
+        assertEquals(listOf(device), transport.connectCalls)
+        assertTrue(transport.disconnectCalls.isEmpty())
+        assertEquals(ConnectionState.Connecting(device), stack.scanner.connectionState)
+    }
+
+    @Test
+    fun searchClosesAPendingReconnectInsteadOfBeingRefused() {
         var now = 1_000L
         val transport = RecordingTransport()
         val stack = createSelectableStack(
@@ -582,28 +650,25 @@ class BleExternalScannerTest {
             nowMillis = { now },
             reconnectDelayMillis = { 1_000L },
         )
-        val other = ScannerDevice("scanner-other", "other scanner")
-
         assertTrue(stack.scanner.connect(device))
-        // A pending connect (Connecting + pending link) cannot be redirected.
-        assertFalse(stack.scanner.connect(other))
         transport.emit(BleTransportEvent.Connected(device))
         transport.completeRead(originalSettings())
-        assertTrue(stack.scanner.setExpectedFormat(ScanFormat.QR))
-        transport.completeWrite(0, Result.success(Unit))
-
         transport.emit(BleTransportEvent.Disconnected(device, unexpected = true))
         now += 1_000L
         stack.scanner.tick(now)
         assertEquals(ConnectionState.Connecting(device), stack.scanner.connectionState)
-        assertFalse(stack.scanner.connect(other))
-        assertEquals(device, stack.scanner.boundDevice)
-        assertEquals(listOf(device, device), transport.connectCalls)
 
-        // Once the reconnect attempt fails there is no link or attempt left.
-        transport.emit(BleTransportEvent.ConnectionFailed(device, "unreachable"))
-        assertTrue(stack.scanner.connect(other))
-        assertEquals(other, stack.scanner.boundDevice)
+        assertTrue(stack.scanner.startDiscovery())
+        assertEquals(listOf(device), transport.disconnectCalls)
+        assertEquals(0, transport.discoveryCalls)
+        transport.emit(BleTransportEvent.Disconnected(device, unexpected = false))
+        stack.scanner.tick(now)
+        assertEquals(1, transport.discoveryCalls)
+        assertEquals(ConnectionState.Searching, stack.scanner.connectionState)
+        // The cancelled attempt is not retried behind the operator's back.
+        now += 60_000L
+        stack.scanner.tick(now)
+        assertEquals(listOf(device, device), transport.connectCalls)
     }
 
     @Test
@@ -623,20 +688,23 @@ class BleExternalScannerTest {
         // owner still has a command on the shared transport.
         stack.scanner.setExpectedFormat(null)
         assertEquals(2, transport.writes.size)
-        assertFalse(stack.scanner.connect(other))
+        // The choice is accepted (#137) but the owner is not replaced yet.
+        assertTrue(stack.scanner.connect(other))
         assertEquals(device, stack.scanner.boundDevice)
+        assertEquals(listOf(device), transport.connectCalls)
 
         // Once that write settles (it cannot reach a scanner without a link),
-        // the other scanner is accepted and A's snapshot stays pending.
+        // the other scanner is bound and A's snapshot stays pending.
         transport.completeWrite(1, Result.failure(IllegalStateException("no link")))
         assertNotNull(stack.snapshotStore.load(device.id))
-        assertTrue(stack.scanner.connect(other))
+        stack.scanner.tick(System.currentTimeMillis())
         assertEquals(other, stack.scanner.boundDevice)
+        assertEquals(listOf(device, other), transport.connectCalls)
         assertNotNull(stack.snapshotStore.load(device.id))
     }
 
     @Test
-    fun unavailablePendingLinkCannotRebindTheSessionToAnotherDevice() {
+    fun unavailablePendingLinkIsClosedBeforeTheChosenScannerIsBound() {
         val transport = RecordingTransport()
         val stack = createSelectableStack(transport)
         val other = ScannerDevice("scanner-other", "other scanner")
@@ -644,10 +712,18 @@ class BleExternalScannerTest {
         transport.availability = BleAvailability.PoweredOff
         transport.emit(BleTransportEvent.AvailabilityChanged(BleAvailability.PoweredOff))
 
-        assertFalse(stack.scanner.connect(other))
+        // The pending link is closed first; the owner is never rebound over it.
+        assertTrue(stack.scanner.connect(other))
+        assertEquals(listOf(device), transport.disconnectCalls)
         assertEquals(device, stack.scanner.boundDevice)
         assertEquals(listOf(device), stack.createdSessions.map { it.scannerDevice })
         assertEquals(listOf(device), transport.connectCalls)
+
+        transport.emit(BleTransportEvent.Disconnected(device, unexpected = false))
+        transport.availability = BleAvailability.Ready
+        stack.scanner.tick(System.currentTimeMillis())
+        assertEquals(other, stack.scanner.boundDevice)
+        assertEquals(listOf(device, other), transport.connectCalls)
     }
 
     @Test
@@ -769,7 +845,12 @@ class BleExternalScannerTest {
         val writeCallbacks = mutableListOf<(Result<Unit>) -> Unit>()
         val writes = mutableListOf<ByteArray>()
 
-        override fun startDiscovery(): Boolean = true
+        var discoveryCalls = 0
+
+        override fun startDiscovery(): Boolean {
+            discoveryCalls++
+            return true
+        }
 
         override fun stopDiscovery(): Boolean = true
 

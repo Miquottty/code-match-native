@@ -1020,8 +1020,9 @@ private fun ScannerCard(
                         else SettingsUiAction.StartDiscovery,
                     )
                 },
-                enabled = state.connectionState !is ConnectionState.Connecting &&
-                    !state.connectionState.isConnected,
+                // Searching stays available while a (re)connection is pending:
+                // the operator's search closes that attempt (#137).
+                enabled = !state.connectionState.isConnected,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 52.dp)
@@ -1068,7 +1069,9 @@ private fun ScannerCard(
             if (selectedDevice != null && !state.connectionState.isConnected) {
                 Button(
                     onClick = { onAction(SettingsUiAction.Connect(selectedDevice)) },
-                    enabled = state.connectionState !is ConnectionState.Connecting,
+                    // Only the device already being connected is disabled; any
+                    // other choice pre-empts that attempt (#137).
+                    enabled = state.connectingDevice?.id != selectedDevice.id,
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 52.dp)
@@ -1078,6 +1081,16 @@ private fun ScannerCard(
                     Spacer(Modifier.width(8.dp))
                     Text(stringResource(R.string.settings_connect))
                 }
+            }
+            if (state.connectRequestRejected) {
+                Text(
+                    text = stringResource(R.string.settings_connect_rejected),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(SettingsTestTags.CONNECT_REJECTED),
+                )
             }
             if (state.connectionState.isConnected) {
                 OutlinedButton(
@@ -1736,6 +1749,8 @@ private fun scannerIssueTitle(
         R.string.settings_scanner_configuration_failed_title
     jp.rimtty.codematch.scanner.api.ScannerIssue.RESTORE_FAILED ->
         R.string.settings_scanner_restore_failed_title
+    jp.rimtty.codematch.scanner.api.ScannerIssue.RESELECT_REQUIRED ->
+        R.string.settings_scanner_reselect_title
     jp.rimtty.codematch.scanner.api.ScannerIssue.NONE -> R.string.settings_scanner_title
 }
 
@@ -1757,6 +1772,8 @@ private fun scannerIssueDescription(
         R.string.settings_scanner_configuration_failed_description
     jp.rimtty.codematch.scanner.api.ScannerIssue.RESTORE_FAILED ->
         R.string.settings_scanner_restore_failed_description
+    jp.rimtty.codematch.scanner.api.ScannerIssue.RESELECT_REQUIRED ->
+        R.string.settings_scanner_reselect_description
     jp.rimtty.codematch.scanner.api.ScannerIssue.NONE -> R.string.settings_scanner_description
 }
 

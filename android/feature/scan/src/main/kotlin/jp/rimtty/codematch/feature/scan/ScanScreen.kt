@@ -668,6 +668,7 @@ private fun BluetoothFallbackCard(
         ScannerIssue.CONFIGURATION_FAILED -> R.string.scan_bluetooth_fallback_configuration
         ScannerIssue.NONE,
         ScannerIssue.CONNECTION_FAILED,
+        ScannerIssue.RESELECT_REQUIRED,
         -> R.string.scan_bluetooth_fallback_connection
     }
     Card(

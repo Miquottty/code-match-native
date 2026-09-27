@@ -61,5 +61,13 @@ internal interface InateckSdkGateway {
         completion: (InateckTuningOutcome) -> Unit,
     ): Boolean = false
 
+    /**
+     * Receives the connect-time Bluetooth-mode check (#137). Before the link
+     * is reported connected, the gateway reads the settings; a scanner that is
+     * not in GATT mode is switched with [InateckGattMode.SWITCH_COMMAND],
+     * restarted, and its connection then fails so the host can follow it.
+     */
+    fun setGattModeListener(listener: ((InateckGattModeEvent) -> Unit)?) {}
+
     fun close()
 }

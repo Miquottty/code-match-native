@@ -73,6 +73,9 @@
     <string name="settings_scanner_configuration_failed_description">設定を確認できなかったため、読み取りを開始していません。再接続してお試しください。</string>
     <string name="settings_scanner_restore_failed_title">スキャナ設定を復元できませんでした</string>
     <string name="settings_scanner_restore_failed_description">安全のため読み取りを開始していません。スキャナを再接続して復元をやり直してください。</string>
+    <string name="settings_scanner_reselect_title">スキャナを選び直してください</string>
+    <string name="settings_scanner_reselect_description">スキャナをGATTモードへ切り替えました。「スキャナを検索」で表示されたスキャナを選んで接続してください。</string>
+    <string name="settings_connect_rejected">接続を開始できませんでした。接続中のスキャナがある場合は先に「切断」してから、もう一度お試しください。</string>
     <string name="settings_scanner_retry">もう一度試す</string>
     <string name="settings_scanner_open_settings">Bluetooth設定</string>
 
