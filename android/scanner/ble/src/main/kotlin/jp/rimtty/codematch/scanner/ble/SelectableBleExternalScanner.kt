@@ -24,8 +24,13 @@ fun interface BleSessionCoordinatorFactory {
  * known device is reconnected after process recreation.
  *
  * Only one device/session owner can be active. Selecting another device is rejected
- * until the previous link is disconnected and its settings session is no longer
- * active, which prevents a pending restore from being redirected to another scanner.
+ * while the previous device still has a physical or pending link or a connect or
+ * reconnect in flight. Once the link is gone the owner may be replaced even if its
+ * scan session was never restored (for example the scanner was switched off
+ * mid-session), as long as that session has no settings read or command left in
+ * flight: its pre-session inventory is persisted under its own device id, so it is
+ * restored on that scanner's next connection and can never be redirected to the
+ * new scanner (#135).
  */
 class SelectableBleExternalScanner(
     private val connectionCoordinator: BleConnectionCoordinator,
@@ -199,10 +204,24 @@ class SelectableBleExternalScanner(
         // Idle/Unavailable may still describe a pending or closing physical
         // link. Do not detach its settings owner before the close callback.
         !connectionCoordinator.hasPhysicalLink &&
-            !current.isSessionActive &&
             connectionCoordinator.connectionState !is BleConnectionState.Connected &&
             connectionCoordinator.connectionState !is BleConnectionState.Connecting &&
-            connectionCoordinator.connectionState !is BleConnectionState.Reconnecting
+            connectionCoordinator.connectionState !is BleConnectionState.Reconnecting &&
+            (!current.isSessionActive || isSettledWithoutLink(current))
+
+    /**
+     * An unrestored session no longer blocks another scanner once its link is
+     * gone (#135): nothing can be written to that scanner now, and its
+     * persisted snapshot is restored by the RECOVERY path when it reconnects.
+     * It must however have nothing left on the shared transport: no settings
+     * read or command still awaiting its callback (the scan flow's restore
+     * request after a drop can be accepted by a transport that has no link)
+     * and no timed-out command still awaiting its transport reset. Both end
+     * within the command/read deadline driven by [tick].
+     */
+    private fun isSettledWithoutLink(current: BleScannerSessionCoordinator): Boolean =
+        !current.isOperationInFlight &&
+            current.state.symbology != BleSymbologySessionState.AwaitingTransportReset
 
     private fun publish(connection: ConnectionState, configuration: ConfigurationState) {
         val currentListener = mutableListener

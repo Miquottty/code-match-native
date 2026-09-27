@@ -26,9 +26,10 @@ sealed interface BleSymbologySessionState {
  * flag range, vendor command, or SDK class is fixed in this module.
  *
  * Each step enables only its expected physical symbology. Before starting, a fresh full
- * device inventory is required and is persisted. The inventory is retained
- * until restoration succeeds, including after a command/read timeout or
- * process interruption.
+ * device inventory is required and is persisted under this scanner's device
+ * id. The inventory is retained until restoration succeeds on this scanner,
+ * including after a command/read timeout or process interruption; other
+ * scanners keep their own records and are never blocked by this one.
  */
 class BleSymbologySession(
     private val device: ScannerDevice,
@@ -109,6 +110,9 @@ class BleSymbologySession(
     /** True while a backgrounded session can be resumed after baseline restore. */
     val isSuspendedForBackground: Boolean get() = suspendedForBackground
     val isSettingsReadPending: Boolean get() = pendingSettingsRead != null
+    /** True while a settings read or command has been issued and not yet settled. */
+    val isOperationInFlight: Boolean
+        get() = pendingSettingsRead != null || commandQueue.isInFlight
     val isReadyForScanning: Boolean
         get() = mutableState == BleSymbologySessionState.SessionReady &&
             mutableConfiguration.isReady
@@ -120,7 +124,9 @@ class BleSymbologySession(
 
     /**
      * Starts a fresh settings read after the transport reports a connection.
-     * A persisted snapshot from another scanner is rejected before any write.
+     * Only this scanner's own persisted snapshot is consulted: when it exists
+     * it is restored before Ready, while a snapshot still pending for another
+     * scanner is left untouched for that scanner's next connection (#135).
      */
     fun onConnected(): Boolean {
         if (mutableState == BleSymbologySessionState.AwaitingTransportReset ||
@@ -164,11 +170,7 @@ class BleSymbologySession(
                 }
                 freshSnapshot = snapshot
                 val persistedResult = runCatching {
-                    when (val deviceRead = snapshotStore.read(device.id)) {
-                        is SymbologySnapshotReadResult.Found -> deviceRead
-                        is SymbologySnapshotReadResult.Rejected -> deviceRead
-                        SymbologySnapshotReadResult.Missing -> snapshotStore.readLatest()
-                    }
+                    snapshotStore.read(device.id)
                 }.getOrElse {
                     SymbologySnapshotReadResult.Rejected(
                         "Saved scanner settings could not be read",
@@ -182,6 +184,8 @@ class BleSymbologySession(
                         return@read
                     }
                 }
+                // The store is keyed by device, so this only guards against a
+                // broken store adapter: never apply another scanner's record.
                 if (persisted != null && persisted.deviceId != device.id) {
                     fail("Saved scanner settings belong to another device")
                     return@read

@@ -31,25 +31,21 @@ class BleSymbologySnapshotStoreTest {
         store.save(snapshot)
 
         assertEquals(snapshot, store.load(snapshot.deviceId))
-        assertEquals(
-            SymbologySnapshotReadResult.Rejected(
-                BleSymbologySnapshotRejectionReason.DEVICE_MISMATCH,
-            ),
-            store.read("other-device"),
-        )
-        assertEquals(
-            SymbologySnapshotClearResult.Rejected(
-                BleSymbologySnapshotRejectionReason.DEVICE_MISMATCH,
-            ),
-            store.clear("other-device"),
-        )
-        assertEquals(snapshot, store.loadLatest())
+        // #135: another device has no record of its own; this one's pending
+        // snapshot neither blocks it nor is cleared by it.
+        assertEquals(SymbologySnapshotReadResult.Missing, store.read("other-device"))
+        assertEquals(SymbologySnapshotClearResult.Missing, store.clear("other-device"))
+        val other = sampleSnapshot().copy(deviceId = "other-device")
+        store.save(other)
+        assertEquals(other, store.load("other-device"))
+        assertEquals(snapshot, store.load(snapshot.deviceId))
 
         assertEquals(SymbologySnapshotClearResult.Cleared, store.clear(snapshot.deviceId))
-        assertEquals(SymbologySnapshotReadResult.Missing, store.readLatest())
+        assertEquals(SymbologySnapshotReadResult.Missing, store.read(snapshot.deviceId))
         assertEquals(SymbologySnapshotClearResult.Missing, store.clear(snapshot.deviceId))
-        // Preferences DataStore keeps its backing file even when the single
-        // snapshot key has been removed; the read above verifies its content.
+        assertEquals(other, store.load("other-device"))
+        // Preferences DataStore keeps its backing file even when a snapshot
+        // key has been removed; the reads above verify its content.
         file.delete()
     }
 
@@ -58,7 +54,8 @@ class BleSymbologySnapshotStoreTest {
         val file = temporaryFile()
         val dataStore = PreferenceDataStoreFactory.create(produceFile = { file })
         val store = BleSymbologySnapshotStore(dataStore, profileIdentity)
-        val key = stringPreferencesKey("completeSnapshot")
+        val deviceId = sampleSnapshot().deviceId
+        val key = stringPreferencesKey("completeSnapshot:$deviceId")
 
         runBlocking {
             dataStore.edit { preferences -> preferences[key] = "not-json" }
@@ -67,7 +64,7 @@ class BleSymbologySnapshotStoreTest {
             SymbologySnapshotReadResult.Rejected(
                 BleSymbologySnapshotRejectionReason.CORRUPT,
             ),
-            store.readLatest(),
+            store.read(deviceId),
         )
 
         val encoded = BleSymbologySnapshotSerializer().encode(sampleSnapshot(), profileIdentity)
@@ -83,7 +80,7 @@ class BleSymbologySnapshotStoreTest {
             SymbologySnapshotReadResult.Rejected(
                 BleSymbologySnapshotRejectionReason.UNSUPPORTED_VERSION,
             ),
-            store.readLatest(),
+            store.read(deviceId),
         )
 
         file.delete()
@@ -101,7 +98,7 @@ class BleSymbologySnapshotStoreTest {
             SymbologySnapshotReadResult.Rejected(
                 BleSymbologySnapshotRejectionReason.PROFILE_MISMATCH,
             ),
-            otherProfileStore.readLatest(),
+            otherProfileStore.read("scanner-1"),
         )
         assertEquals(
             SymbologySnapshotClearResult.Rejected(
@@ -109,7 +106,7 @@ class BleSymbologySnapshotStoreTest {
             ),
             otherProfileStore.clear("scanner-1"),
         )
-        assertEquals(sampleSnapshot(), firstStore.loadLatest())
+        assertEquals(sampleSnapshot(), firstStore.load("scanner-1"))
 
         file.delete()
     }
@@ -122,9 +119,9 @@ class BleSymbologySnapshotStoreTest {
 
         store.save(sampleSnapshot())
         val serialized = runBlocking {
-            dataStore.data.first()[stringPreferencesKey("completeSnapshot")]
+            dataStore.data.first()[stringPreferencesKey("completeSnapshot:scanner-1")]
         }
-        // The store has one dedicated preference and its serializer schema;
+        // The store has one dedicated preference per scanner and its serializer schema;
         // scanner callbacks are not part of either boundary.
         assertTrue(serialized != null)
         assertFalse(serialized.orEmpty().contains("scanPayload"))

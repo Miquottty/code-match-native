@@ -155,7 +155,9 @@ class BleSymbologySessionTest {
     }
 
     @Test
-    fun snapshotBelongingToAnotherDeviceIsRejectedBeforeAnyWrite() {
+    fun snapshotPendingForAnotherDeviceNeitherBlocksNorIsAppliedToThisScanner() {
+        // #135: before, another scanner's pending snapshot failed this scanner
+        // with "Saved scanner settings belong to another device".
         val transport = RecordingTransport()
         val store = InMemorySymbologySnapshotStore(profileIdentity)
         val other = SymbologySettings.parse("other-scanner", settingsJson())!!
@@ -165,12 +167,94 @@ class BleSymbologySessionTest {
         session.onConnected()
         transport.completeRead(settingsJson())
 
+        assertEquals(BleSymbologySessionState.Ready, session.state)
+        assertEquals(ConfigurationState.Ready, session.configurationState)
+        assertEquals(0, transport.writeCallbacks.size)
+        assertEquals(other, store.load("other-scanner"))
+        assertNull(store.load(device.id))
+    }
+
+    @Test
+    fun scannerBIsUsableWhileAIsPendingAndAIsRestoredWhenItReturns() {
+        val scannerA = ScannerDevice("AA:AA:AA:AA:AA:01", "HPRT-636E")
+        val scannerB = ScannerDevice("BB:BB:BB:BB:BB:02", "HPRT-4F5F")
+        val store = InMemorySymbologySnapshotStore(profileIdentity)
+
+        // A starts a session (its baseline is saved) and then drops mid-session.
+        val transportA = RecordingTransport()
+        val sessionA = session(transportA, store, scanner = scannerA)
+        assertTrue(sessionA.onConnected())
+        transportA.completeRead(settingsJson())
+        assertTrue(sessionA.startSession(ScanFormat.QR))
+        transportA.completeWrite(Result.success(Unit))
+        assertEquals(BleSymbologySessionState.SessionReady, sessionA.state)
+        sessionA.onTransportDisconnected()
+        assertTrue(sessionA.isSessionActive)
+        val pendingA = store.load(scannerA.id)
+        assertNotNull(pendingA)
+
+        // B connects: Ready without any write, and A's snapshot is untouched.
+        val transportB = RecordingTransport()
+        val sessionB = session(transportB, store, scanner = scannerB)
+        assertTrue(sessionB.onConnected())
+        transportB.completeRead(settingsJson())
+        assertEquals(BleSymbologySessionState.Ready, sessionB.state)
+        assertEquals(ConfigurationState.Ready, sessionB.configurationState)
+        assertTrue(transportB.writes.isEmpty())
+        assertEquals(pendingA, store.load(scannerA.id))
+
+        // B runs its own session with its own snapshot; ending it clears B only.
+        assertTrue(sessionB.startSession(ScanFormat.QR))
+        assertEquals(scannerB.id, store.load(scannerB.id)?.deviceId)
+        transportB.completeWrite(Result.success(Unit))
+        assertTrue(sessionB.isReadyForScanning)
+        assertTrue(sessionB.endSession())
+        transportB.completeWrite(Result.success(Unit))
+        assertEquals(BleSymbologySessionState.Ready, sessionB.state)
+        assertNull(store.load(scannerB.id))
+        assertEquals(pendingA, store.load(scannerA.id))
+
+        // A comes back: the RECOVERY path restores A's baseline and clears A only.
+        val transportA2 = RecordingTransport()
+        val reconnectedA = session(transportA2, store, scanner = scannerA)
+        assertTrue(reconnectedA.onConnected())
+        transportA2.completeRead(restrictedSettingsJson())
+        assertEquals(BleSymbologySessionState.Restoring, reconnectedA.state)
+        val restored = parseCommands(transportA2.writes.single())
         assertEquals(
-            BleSymbologySessionState.Failed("Saved scanner settings belong to another device"),
+            1,
+            restored.first { it.asJsonObject.get("name").asString == "code39_on" }
+                .asJsonObject.get("value").asString.toInt(),
+        )
+        transportA2.completeWrite(Result.success(Unit))
+        assertEquals(BleSymbologySessionState.Ready, reconnectedA.state)
+        assertNull(store.load(scannerA.id))
+    }
+
+    @Test
+    fun rejectedSnapshotOfThisScannerStillFailsBeforeAnyWrite() {
+        val transport = RecordingTransport()
+        val backing = InMemorySymbologySnapshotStore(profileIdentity)
+        val rejectingStore = object : SymbologySnapshotStore by backing {
+            override fun read(deviceId: String): SymbologySnapshotReadResult =
+                if (deviceId == device.id) {
+                    SymbologySnapshotReadResult.Rejected(
+                        BleSymbologySnapshotRejectionReason.CORRUPT,
+                    )
+                } else {
+                    SymbologySnapshotReadResult.Missing
+                }
+        }
+        val session = session(transport, rejectingStore)
+
+        session.onConnected()
+        transport.completeRead(settingsJson())
+
+        assertEquals(
+            BleSymbologySessionState.Failed(BleSymbologySnapshotRejectionReason.CORRUPT),
             session.state,
         )
-        assertEquals(0, transport.writeCallbacks.size)
-        assertEquals(ConfigurationState.Failed("Saved scanner settings belong to another device"), session.configurationState)
+        assertTrue(transport.writes.isEmpty())
     }
 
     @Test
@@ -372,8 +456,9 @@ class BleSymbologySessionTest {
         store: SymbologySnapshotStore,
         nowMillis: () -> Long = { 0L },
         settingsReadTimeoutMillis: Long = 3_000L,
+        scanner: ScannerDevice = device,
     ) = BleSymbologySession(
-        device = device,
+        device = scanner,
         transport = transport,
         profile = BleSymbologyProfile(
             settingsEndpoint,
@@ -468,6 +553,17 @@ class BleSymbologySessionTest {
             return encodedPayload.copyOf()
         }
     }
+
+    /** The same inventory left restricted to QR only by an unrestored session. */
+    private fun restrictedSettingsJson(): String = """
+        {"data":[
+          {"area":"11","value":"0","name":"code39_on"},
+          {"area":"42","value":"1","name":"qrcode_on"},
+          {"area":17,"value":0,"name":"code128_on"},
+          {"area":"12","value":"0","name":"ean_13_on"},
+          {"area":"99","value":"0","name":"future_symbol","flag":2028,"vendor":"keep"}
+        ]}
+    """.trimIndent()
 
     private fun settingsJson(): String = """
         {"data":[

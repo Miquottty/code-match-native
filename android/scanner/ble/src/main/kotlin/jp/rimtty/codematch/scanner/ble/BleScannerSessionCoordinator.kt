@@ -89,6 +89,10 @@ class BleScannerSessionCoordinator(
     val isSessionActive: Boolean
         get() = symbologySession.isSessionActive
 
+    /** Whether a settings read or command of this owner is still unsettled. */
+    val isOperationInFlight: Boolean
+        get() = symbologySession.isOperationInFlight
+
     /** Whether a backgrounded session is waiting for foreground resumption. */
     val isSuspendedForBackground: Boolean
         get() = symbologySession.isSuspendedForBackground
