@@ -22,13 +22,26 @@ import jp.rimtty.codematch.scanner.api.ScannerIssue
 import jp.rimtty.codematch.scanner.api.scannerIssueFor
 
 /**
+ * Whether a Bluetooth scanner can be the input source (#145): its link is
+ * established and its configuration has not failed. A scanner that is still
+ * configuring counts; payloads are forwarded only once it is ready.
+ */
+val ExternalScanner.isBluetoothInputUsable: Boolean
+    get() = connectionState.connectedDevice != null &&
+        configurationState !is ConfigurationState.Failed
+
+/**
  * Bridges scanner lifecycle callbacks to the pure [ScanReducer].
  *
- * This class owns only input-source policy: a ready connected scanner is the
- * initial source, a user camera choice wins over later connection callbacks,
- * and a disconnect falls back to camera without discarding the current step or
- * QR value. Persistence and Compose state collection are intentionally outside
- * this M2 contract.
+ * This class owns only input-source policy (#145): while a scanner is usable
+ * ([isBluetoothInputUsable]) Bluetooth is the source at session start, at the
+ * QR step of every box, on a QR reread, when the scanner connects or becomes
+ * ready, and when the scan screen returns to the foreground. An explicit
+ * camera choice lasts for the current box only (QR → Code 128 → result; a
+ * reread is the same box). A disconnect or configuration failure falls back
+ * to camera without discarding the current step or QR value, and the source
+ * returns to Bluetooth when the scanner is ready again. Persistence and
+ * Compose state collection are intentionally outside this contract.
  */
 class ScanSessionCoordinator(
     private val scanner: ExternalScanner,
@@ -80,7 +93,11 @@ class ScanSessionCoordinator(
     var inputSource: InputSource = state.inputSource
         private set
 
-    /** True after an explicit camera selection until the user selects Bluetooth. */
+    /**
+     * True after an explicit camera selection, for the current box only: it
+     * is cleared when the flow returns to the QR step for the next box (and
+     * when the operator selects Bluetooth). A QR reread keeps it.
+     */
     var cameraWasSelectedByUser: Boolean = restoredCheckpoint?.cameraWasSelectedByUser ?: false
         private set
 
@@ -89,11 +106,16 @@ class ScanSessionCoordinator(
         private set
 
     /**
-     * Keeps a scanner with an unverified connected configuration from being
-     * promoted back to Bluetooth while fallback restores its baseline. A
-     * later explicit reconnect or Bluetooth selection clears this hold.
+     * Configuration-failure fallbacks since the scanner last reached payload
+     * readiness. The source returns to Bluetooth on every Ready; only a
+     * streak of [MAX_CONSECUTIVE_CONFIGURATION_FALLBACKS] failures without a
+     * single successful restriction pauses the automatic return, and only
+     * until the next box, an explicit Bluetooth choice or reconnect. On
+     * Android a failed restriction is followed by a baseline restore that
+     * reports Ready again, so an unbounded return could otherwise rewrite the
+     * scanner in a tight loop. This never pins the camera for the session.
      */
-    private var bluetoothFallbackBlocksPromotion = false
+    private var configurationFallbackStreak = 0
 
     var lastEffects: List<ScanEffect> = emptyList()
         private set
@@ -132,10 +154,15 @@ class ScanSessionCoordinator(
             // Bluetooth source is no longer available, retain the logical step
             // and fall back to camera input.
             if (inputSource == InputSource.BLUETOOTH &&
-                !scanner.isReadyToStartSession &&
+                !scanner.isBluetoothInputUsable &&
                 !scanner.connectionState.isConnectionPending
             ) {
                 setInputSource(InputSource.CAMERA)
+            } else {
+                // A restored camera source (for example a fallback saved while
+                // the scanner was momentarily not ready) returns to a usable
+                // scanner unless the operator chose camera for this box.
+                promoteToBluetoothIfUsable(applyFormat = false)
             }
             val reduction = ScanReduction(
                 state = state,
@@ -148,9 +175,6 @@ class ScanSessionCoordinator(
             return reduction
         }
 
-        if (scanner.isReadyToStartSession && !cameraWasSelectedByUser) {
-            setInputSource(InputSource.BLUETOOTH)
-        }
         return dispatch(ScanEvent.StartSession)
     }
 
@@ -254,7 +278,6 @@ class ScanSessionCoordinator(
         return when (source) {
             InputSource.CAMERA -> {
                 cameraWasSelectedByUser = true
-                bluetoothFallbackBlocksPromotion = false
                 setInputSource(InputSource.CAMERA)
                 applyExpectedFormat(null)
                 true
@@ -262,12 +285,12 @@ class ScanSessionCoordinator(
 
             InputSource.BLUETOOTH -> {
                 cameraWasSelectedByUser = false
-                if (!scanner.isReadyToStartSession) {
+                configurationFallbackStreak = 0
+                if (!scanner.isBluetoothInputUsable) {
                     setInputSource(InputSource.CAMERA)
                     applyExpectedFormat(null)
                     false
                 } else {
-                    bluetoothFallbackBlocksPromotion = false
                     setInputSource(InputSource.BLUETOOTH)
                     applyExpectedFormat()
                     true
@@ -291,16 +314,16 @@ class ScanSessionCoordinator(
             scanner.configurationState == ConfigurationState.Configuring
         ) return false
         if (scanner.isConnected &&
-            (!scanner.isReadyToStartSession || bluetoothFallbackBlocksPromotion)
+            (!scanner.isReadyToStartSession || configurationFallbackStreak > 0)
         ) {
             scanner.disconnect()
         }
         val reconnected = scanner.reconnectKnownDevice()
         if (reconnected) {
             // Reconnect is normally asynchronous. An explicit user retry
-            // releases the configuration-failure hold now so the later Ready
-            // callback can promote the session back to Bluetooth.
-            bluetoothFallbackBlocksPromotion = false
+            // resets the failure streak now so the later Ready callback
+            // promotes the session back to Bluetooth.
+            configurationFallbackStreak = 0
             if (scanner.isReadyForScanning) {
                 handleConnectionState(scanner.connectionState)
             }
@@ -333,6 +356,7 @@ class ScanSessionCoordinator(
         state = reduction.state
         lastEffects = reduction.effects
         recordReductionLog(event, previousState, reduction)
+        selectSourceForStep(event, reduction)
         applyEffects(reduction.effects)
         onStateChanged?.invoke(state)
         onEffects?.invoke(reduction.effects)
@@ -347,7 +371,14 @@ class ScanSessionCoordinator(
     override fun onConfigurationStateChanged(state: ConfigurationState) {
         onScannerConfigurationStateChanged?.invoke(state)
         when (state) {
-            ConfigurationState.Ready -> handleConnectionState(scanner.connectionState)
+            ConfigurationState.Ready -> {
+                handleConnectionState(scanner.connectionState)
+                if (inputSource == InputSource.BLUETOOTH && scanner.isReadyForScanning) {
+                    // The restriction was applied: a later failure starts a
+                    // new streak.
+                    configurationFallbackStreak = 0
+                }
+            }
             is ConfigurationState.Failed -> fallbackToCameraIfBluetooth()
             ConfigurationState.Unavailable -> {
                 if (scanner.connectionState.connectedDevice == null &&
@@ -366,15 +397,10 @@ class ScanSessionCoordinator(
 
     private fun handleConnectionState(connectionState: ConnectionState) {
         if (connectionState.connectedDevice != null) {
-            if (state.phase != ScanPhase.IDLE &&
-                scanner.configurationState === ConfigurationState.Ready &&
-                !cameraWasSelectedByUser &&
-                !bluetoothFallbackBlocksPromotion &&
-                !isBackgrounded
-            ) {
-                setInputSource(InputSource.BLUETOOTH)
-                applyExpectedFormat()
-            }
+            // Connected (configuring or ready): Bluetooth, unless the operator
+            // chose camera for this box. A still-configuring scanner shows the
+            // Bluetooth input; its restriction is applied once it is Ready.
+            promoteToBluetoothIfUsable()
             return
         }
 
@@ -398,7 +424,7 @@ class ScanSessionCoordinator(
             scanner.configurationState,
         ).takeIf { it != ScannerIssue.NONE } ?: ScannerIssue.CONNECTION_FAILED
         if (issue == ScannerIssue.CONFIGURATION_FAILED || issue == ScannerIssue.RESTORE_FAILED) {
-            bluetoothFallbackBlocksPromotion = true
+            configurationFallbackStreak++
         }
         // setInputSource/applyExpectedFormat may synchronously clear a failed
         // configuration on real or fake adapters. Publish the typed issue
@@ -407,6 +433,49 @@ class ScanSessionCoordinator(
         setInputSource(InputSource.CAMERA)
         applyExpectedFormat(null)
         onBluetoothFallback?.invoke()
+    }
+
+    /**
+     * Source policy at step boundaries (#145). The next box (manual or
+     * automatic advance back to the QR step) and a new session end the
+     * operator's one-box camera choice; a QR reread is the same box and keeps
+     * it. Then a usable scanner becomes the source for the QR step, the
+     * reread and the return to the foreground. Called before the reduction's
+     * effects are applied so they start the chosen source.
+     */
+    private fun selectSourceForStep(event: ScanEvent, reduction: ScanReduction) {
+        val nextBox = event == ScanEvent.StartSession ||
+            (event != ScanEvent.RereadQr && reduction.effects.contains(ScanEffect.StartNextScan))
+        if (nextBox) {
+            cameraWasSelectedByUser = false
+            configurationFallbackStreak = 0
+        }
+        val selectsSource = nextBox || event == ScanEvent.RereadQr || event == ScanEvent.Foregrounded
+        if (selectsSource) promoteToBluetoothIfUsable(applyFormat = false)
+    }
+
+    /**
+     * Make Bluetooth the source when the scanner is usable, the session is
+     * running in the foreground, the operator has not chosen camera for this
+     * box, and no failure streak pauses the return. With [applyFormat] the
+     * current step's restriction is requested right away (it is applied by
+     * the adapter once the scanner is Ready).
+     */
+    private fun promoteToBluetoothIfUsable(applyFormat: Boolean = true): Boolean {
+        // A callback delivered synchronously from our own scanner call (for
+        // example the baseline restore of a fallback) must not re-enter it.
+        if (applyingScannerFormat) return false
+        if (state.phase == ScanPhase.IDLE || isBackgrounded || cameraWasSelectedByUser) return false
+        if (!scanner.isBluetoothInputUsable) return false
+        if (configurationFallbackStreak >= MAX_CONSECUTIVE_CONFIGURATION_FALLBACKS) return false
+        setInputSource(InputSource.BLUETOOTH)
+        if (applyFormat) applyExpectedFormat()
+        return true
+    }
+
+    companion object {
+        /** Configuration failures in a row that pause the automatic return. */
+        const val MAX_CONSECUTIVE_CONFIGURATION_FALLBACKS: Int = 3
     }
 
     private fun applyEffects(effects: List<ScanEffect>) {

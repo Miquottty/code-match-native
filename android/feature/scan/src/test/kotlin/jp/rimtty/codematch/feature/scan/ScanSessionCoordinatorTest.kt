@@ -200,9 +200,226 @@ class ScanSessionCoordinatorTest {
         assertEquals(InputSource.CAMERA, coordinator.inputSource)
         assertEquals(ScanPhase.WAITING_CODE_128, coordinator.state.phase)
         assertEquals(qrPayload, coordinator.state.qrPayload)
-        // The adapter baseline is ready again, but an unverified session must
-        // not be promoted back to Bluetooth until an explicit reconnect.
+        // The baseline restore reported Ready from inside the fallback; that
+        // re-entrant callback does not flip the source back mid-fallback.
         assertEquals(ConfigurationState.Ready, scanner.configurationState)
+
+        // #145: the next Ready returns to Bluetooth without an explicit
+        // reconnect (it used to stay on camera for the rest of the session).
+        scanner.markReady()
+        assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+        assertEquals(ScanPhase.WAITING_CODE_128, coordinator.state.phase)
+        assertEquals(ScanFormat.CODE_128, scanner.expectedFormat)
+    }
+
+    @Test
+    fun cameraChoiceLastsOneBoxThenTheNextBoxStartsOnBluetooth() {
+        val scanner = TestScanner().apply { markReady() }
+        val coordinator = ScanSessionCoordinator(scanner)
+        coordinator.startSession()
+        assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+
+        assertTrue(coordinator.selectInputSource(InputSource.CAMERA))
+        scanner.markReady()
+        assertEquals(InputSource.CAMERA, coordinator.inputSource)
+        completeBoxWithCamera(coordinator, 0L)
+        assertEquals(ScanPhase.RESULT, coordinator.state.phase)
+        assertEquals(InputSource.CAMERA, coordinator.inputSource)
+
+        coordinator.manualNext()
+
+        assertEquals(ScanPhase.WAITING_QR, coordinator.state.phase)
+        assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+        assertEquals(false, coordinator.cameraWasSelectedByUser)
+        assertEquals(ScanFormat.QR, scanner.expectedFormat)
+    }
+
+    @Test
+    fun autoAdvanceToTheNextBoxAlsoEndsTheCameraChoice() {
+        val scanner = TestScanner().apply { markReady() }
+        val coordinator = ScanSessionCoordinator(scanner, autoAdvanceEnabled = true)
+        coordinator.startSession()
+        assertTrue(coordinator.selectInputSource(InputSource.CAMERA))
+        completeBoxWithCamera(coordinator, 0L)
+        assertEquals(ScanPhase.RESULT, coordinator.state.phase)
+
+        coordinator.tickAutoAdvance(10)
+
+        assertEquals(ScanPhase.WAITING_QR, coordinator.state.phase)
+        assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+        assertEquals(false, coordinator.cameraWasSelectedByUser)
+    }
+
+    @Test
+    fun qrRereadIsTheSameBoxAndKeepsTheCameraChoice() {
+        val scanner = TestScanner().apply { markReady() }
+        val coordinator = ScanSessionCoordinator(scanner)
+        coordinator.startSession()
+        assertTrue(coordinator.selectInputSource(InputSource.CAMERA))
+        coordinator.submitScanPayload(ScanPayload.qr(qrPayload, InputSource.CAMERA, 0L))
+        assertEquals(ScanPhase.WAITING_CODE_128, coordinator.state.phase)
+
+        coordinator.rereadQr()
+
+        assertEquals(ScanPhase.WAITING_QR, coordinator.state.phase)
+        assertEquals(InputSource.CAMERA, coordinator.inputSource)
+        assertTrue(coordinator.cameraWasSelectedByUser)
+    }
+
+    @Test
+    fun qrRereadWithoutACameraChoiceUsesBluetooth() {
+        val scanner = TestScanner().apply { markReady() }
+        val coordinator = ScanSessionCoordinator(scanner)
+        coordinator.startSession()
+        coordinator.submitScanPayload(ScanPayload.qr(qrPayload, InputSource.BLUETOOTH))
+        assertEquals(ScanFormat.CODE_128, scanner.expectedFormat)
+
+        coordinator.rereadQr()
+
+        assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+        assertEquals(ScanFormat.QR, scanner.expectedFormat)
+    }
+
+    @Test
+    fun configuringScannerIsSelectedAtStartAndWhenItConnects() {
+        val configuring = TestScanner().apply { markConfiguring() }
+        val atStart = ScanSessionCoordinator(configuring)
+        atStart.startSession()
+        assertEquals(InputSource.BLUETOOTH, atStart.inputSource)
+        configuring.markReady()
+        assertEquals(InputSource.BLUETOOTH, atStart.inputSource)
+        assertEquals(ScanFormat.QR, configuring.expectedFormat)
+
+        val scanner = TestScanner()
+        val coordinator = ScanSessionCoordinator(scanner)
+        coordinator.startSession()
+        assertEquals(InputSource.CAMERA, coordinator.inputSource)
+        scanner.markConnecting()
+        assertEquals(InputSource.CAMERA, coordinator.inputSource)
+        scanner.markConfiguring()
+        // Configuring shows the Bluetooth input instead of staying on camera.
+        assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+        scanner.markReady()
+        assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+        assertEquals(ScanFormat.QR, scanner.expectedFormat)
+    }
+
+    @Test
+    fun selectingBluetoothWhileConfiguringIsAccepted() {
+        val scanner = TestScanner().apply { markReady() }
+        val coordinator = ScanSessionCoordinator(scanner)
+        coordinator.startSession()
+        assertTrue(coordinator.selectInputSource(InputSource.CAMERA))
+        scanner.markConfiguring()
+        assertEquals(InputSource.CAMERA, coordinator.inputSource)
+
+        assertTrue(coordinator.selectInputSource(InputSource.BLUETOOTH))
+        assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+    }
+
+    @Test
+    fun repeatedConfigurationFailuresStillReturnToBluetoothOnReady() {
+        val scanner = TestScanner().apply { markReady() }
+        val coordinator = ScanSessionCoordinator(scanner)
+        coordinator.startSession()
+        repeat(5) {
+            scanner.markConfigurationFailed("scanner settings rejected")
+            assertEquals(InputSource.CAMERA, coordinator.inputSource)
+            scanner.markReady()
+            assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+            assertEquals(ScanFormat.QR, scanner.expectedFormat)
+        }
+        assertEquals(ScanPhase.WAITING_QR, coordinator.state.phase)
+    }
+
+    @Test
+    fun aRestrictionThatNeverSucceedsPausesTheReturnOnlyUntilTheNextBox() {
+        val scanner = TestScanner().apply { markReady() }
+        val coordinator = ScanSessionCoordinator(scanner)
+        coordinator.startSession()
+        scanner.failRestriction = true
+
+        scanner.markConfigurationFailed("scanner settings rejected")
+        repeat(ScanSessionCoordinator.MAX_CONSECUTIVE_CONFIGURATION_FALLBACKS - 1) {
+            // Every Ready retries Bluetooth; the restriction fails again.
+            scanner.markReady()
+            assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+            scanner.rejectRestriction()
+            assertEquals(InputSource.CAMERA, coordinator.inputSource)
+        }
+        val attempts = scanner.restrictionAttempts
+        scanner.markReady()
+        // The streak pauses the automatic return instead of looping.
+        assertEquals(InputSource.CAMERA, coordinator.inputSource)
+        assertEquals(attempts, scanner.restrictionAttempts)
+
+        scanner.failRestriction = false
+        completeBoxWithCamera(coordinator, 0L)
+        coordinator.manualNext()
+        assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+        assertEquals(ScanFormat.QR, scanner.expectedFormat)
+    }
+
+    @Test
+    fun foregroundReturnReselectsAConnectedScanner() {
+        val scanner = TestScanner().apply { markReady() }
+        val coordinator = ScanSessionCoordinator(scanner)
+        coordinator.startSession()
+
+        coordinator.onBackgrounded()
+        scanner.markDisconnected()
+        assertEquals(InputSource.CAMERA, coordinator.inputSource)
+        scanner.markReady()
+        // Nothing is restarted while the scan screen is in the background.
+        assertEquals(InputSource.CAMERA, coordinator.inputSource)
+
+        coordinator.onForegrounded()
+        assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+        assertEquals(ScanFormat.QR, scanner.expectedFormat)
+    }
+
+    @Test
+    fun scanTabReturnSelectsBluetoothWhileTheRestoreWriteStillConfigures() {
+        val scanner = TestScanner().apply { markReady() }
+        val coordinator = ScanSessionCoordinator(scanner)
+        coordinator.startSession()
+        coordinator.onBackgrounded()
+        // Leaving the tab restores the scanner baseline: momentarily not ready.
+        scanner.markConfiguring()
+
+        coordinator.onForegrounded()
+
+        assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+        scanner.markReady()
+        assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+        assertEquals(ScanFormat.QR, scanner.expectedFormat)
+    }
+
+    @Test
+    fun restoredCameraFallbackReturnsToAConnectedScannerOnRestore() {
+        val scanner = TestScanner().apply { markConfiguring() }
+        val coordinator = ScanSessionCoordinator(
+            scanner = scanner,
+            restoredCheckpoint = ScanSessionCheckpoint(
+                sessionId = "session",
+                phase = ScanCheckpointPhase.WAITING_CODE_128,
+                qrPayload = qrPayload,
+                matchedCount = 2,
+                inputSource = ScanCheckpointInputSource.CAMERA,
+            ),
+        )
+
+        coordinator.startSession()
+
+        assertEquals(InputSource.BLUETOOTH, coordinator.inputSource)
+        assertEquals(ScanPhase.WAITING_CODE_128, coordinator.state.phase)
+        assertEquals(qrPayload, coordinator.state.qrPayload)
+    }
+
+    private fun completeBoxWithCamera(coordinator: ScanSessionCoordinator, start: Long) {
+        coordinator.submitScanPayload(ScanPayload.qr(qrPayload, InputSource.CAMERA, start))
+        coordinator.submitScanPayload(ScanPayload.code128(barcodePayload, InputSource.CAMERA, start + 1_000L))
+        coordinator.submitScanPayload(ScanPayload.code128(barcodePayload, InputSource.CAMERA, start + 1_250L))
     }
 
     @Test
@@ -894,13 +1111,32 @@ class ScanSessionCoordinatorTest {
             return true
         }
 
+        /** Every restriction write fails (a scanner that keeps rejecting it). */
+        var failRestriction: Boolean = false
+        var restrictionAttempts = 0
+
         override fun setExpectedFormat(format: ScanFormat?): Boolean {
             expectedFormat = format
             if (format == null && connectionState.connectedDevice != null) {
                 configurationState = ConfigurationState.Ready
             }
+            if (format != null) restrictionAttempts++
+            if (format != null && failRestriction && connectionState.connectedDevice != null) {
+                // The write is pending; rejectRestriction() fails it later,
+                // asynchronously like a real BLE callback.
+                configurationState = ConfigurationState.Configuring
+            }
             listener?.onConfigurationStateChanged(configurationState)
             return true
+        }
+
+        fun rejectRestriction() = markConfigurationFailed("restriction rejected")
+
+        fun markConfiguring() {
+            connectionState = ConnectionState.Connected(device)
+            configurationState = ConfigurationState.Configuring
+            listener?.onConnectionStateChanged(connectionState)
+            listener?.onConfigurationStateChanged(configurationState)
         }
 
         fun markReady() {
