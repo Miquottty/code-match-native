@@ -262,6 +262,10 @@ final class BluetoothScannerService: NSObject, ObservableObject {
 #if INATECK_SDK
     private var sdkDevices: [String: BLEDevice] = [:]
     private var connectedSDKDevice: BLEDevice?
+    /// 接続を試みている最中のSDK端末。利用者が別のスキャナーを選んだら閉じる（#137）。
+    private var connectingSDKDevice: BLEDevice?
+    /// SDK接続の試行ごとの番号。打ち切った試行の遅れた完了通知とscan通知を捨てる。
+    private var connectAttemptGeneration = 0
     private var availabilityMonitor: CBCentralManager?
     private var pendingDiscovery = false
     private var sdkDiscoveryIsRunning = false
@@ -310,6 +314,11 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     var isConnecting: Bool {
         if case .connecting = state { return true }
         return false
+    }
+    /// 接続中の端末。設定画面はこの端末の行だけを押せなくし、別の端末は選べるようにする。
+    var connectingDeviceID: String? {
+        if case .connecting(let device) = state { return device.id }
+        return nil
     }
     var reconnectableDevice: BluetoothScannerDevice? {
         guard let id = defaults.string(forKey: Self.lastKnownDeviceIDKey), !id.isEmpty else {
@@ -461,6 +470,50 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         }
     }
 
+    /// 利用者が選んだスキャナーへ接続する。同時に使うのは1台なので、選んだ時点で
+    /// 自動再接続の対象をこのスキャナーへ切り替え、進行中の自動再接続・検索・
+    /// 別の端末への接続試行を打ち切ってから接続する（#137）。前のスキャナーの
+    /// 復元待ちスナップショットは残し、そのスキャナーの次回接続で復元する。
+    func connectSelectedDevice(_ device: BluetoothScannerDevice) {
+        trace("Scanner selected by the operator: \(device.name) [\(device.id)]")
+        guard connectedDevice?.id != device.id else {
+            trace("Selected scanner is already connected")
+            return
+        }
+        guard !isConnected else {
+            trace("Selected scanner ignored: disconnect the connected scanner first")
+            return
+        }
+#if INATECK_SDK
+        // GATT切替中などリンクは確立済みで設定途中の端末は、ここで閉じずに終わるのを待つ。
+        guard connectedSDKDevice == nil else {
+            trace("Selected scanner ignored: the current scanner link is still being configured")
+            return
+        }
+#endif
+        reconnectDeviceID = nil
+        defaults.set(device.id, forKey: Self.preferredDeviceIDKey)
+#if INATECK_SDK
+        automaticReconnectTask?.cancel()
+        automaticReconnectTask = nil
+        automaticReconnectAttempt = 0
+        finishGATTSwitchRediscovery()
+        if sdkDiscoveryIsRunning || pendingDiscovery {
+            pendingDiscovery = false
+            sdkDiscoveryIsRunning = false
+            BLEManager.shared.stopScan()
+        }
+        if case .connecting(let pendingDevice) = state {
+            if pendingDevice.id == device.id {
+                trace("Selected scanner is already connecting")
+                return
+            }
+            abandonPendingConnection(reason: "another scanner was selected")
+        }
+#endif
+        connect(device)
+    }
+
     func connect(
         _ device: BluetoothScannerDevice,
         timeout: TimeInterval = BluetoothScannerService.connectionTimeout
@@ -490,6 +543,9 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         automaticReconnectTask = nil
         reconnectDeviceID = nil
         state = .connecting(device)
+        connectAttemptGeneration += 1
+        let attempt = connectAttemptGeneration
+        connectingSDKDevice = sdkDevice
         // The first connection can present an iOS bonding dialog. Five seconds
         // is enough for scanning, but not for the user to approve that dialog
         // and for the SDK to finish service discovery.
@@ -499,6 +555,9 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    // 打ち切った接続試行の端末から届いたscan通知は、選び直した後の照合へ流さない。
+                    guard attempt == self.connectAttemptGeneration
+                            || self.connectedSDKDevice?.uuid == sdkDevice.uuid else { return }
                     guard let payload = Self.decodedSDKScanPayload(value) else {
                         self.trace(
                             "SDK callback ignored because it was not a complete scan payload "
@@ -512,6 +571,15 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         } completion: { [weak self] result in
             Task { @MainActor in
                 guard let self else { return }
+                guard attempt == self.connectAttemptGeneration else {
+                    // 利用者が別のスキャナーを選んで打ち切った試行。遅れて成功しても使わずに閉じる。
+                    if case .success = result {
+                        self.trace("Superseded connection to \(device.name) [\(device.id)] closed")
+                        sdkDevice.disconnect { _ in }
+                    }
+                    return
+                }
+                self.connectingSDKDevice = nil
                 switch result {
                 case .success:
                     self.connectedSDKDevice = sdkDevice
@@ -650,7 +718,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             return
         }
         trace("Manual reconnect requested for known scanner: \(device.name) [\(device.id)]")
-        connect(device)
+        connectSelectedDevice(device)
     }
 
     func setApplicationActive(_ isActive: Bool) {
@@ -1324,6 +1392,19 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    /// 別の端末への接続試行を打ち切る。SDKの接続待ちを閉じ、遅れて届く完了通知は
+    /// `connectAttemptGeneration`の不一致で捨てる。
+    private func abandonPendingConnection(reason: String) {
+        connectAttemptGeneration += 1
+        gattModeChangeInProgress = false
+        if let pending = connectingSDKDevice {
+            connectingSDKDevice = nil
+            trace("Pending connection to \(pending.name ?? pending.uuid) abandoned (\(reason))")
+            pending.disconnect { _ in }
+        }
+        state = .idle
     }
 
     /// 切替元のリンクが閉じた後、再起動を待って再検索する。SDKの切断通知と

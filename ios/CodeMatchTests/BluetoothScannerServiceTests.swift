@@ -458,6 +458,48 @@ final class BluetoothScannerServiceTests: XCTestCase {
         XCTAssertEqual(service.persistedSymbologySnapshot(for: "OTHER-SCANNER"), otherScanner)
     }
 
+    /// 1台運用なので、利用者が選んだスキャナーが自動再接続の対象を置き換える（#137）。
+    func testSelectedScannerReplacesTheAutomaticReconnectTarget() {
+        let defaults = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("PREVIOUS-SCANNER", forKey: BluetoothScannerService.preferredDeviceIDKey)
+        let service = BluetoothScannerService(defaults: defaults)
+        service.startDiscovery()
+        let selected = service.devices[0]
+
+        service.connectSelectedDevice(selected)
+
+        XCTAssertEqual(service.connectedDevice, selected)
+        XCTAssertNil(service.connectingDeviceID)
+        XCTAssertEqual(
+            defaults.string(forKey: BluetoothScannerService.preferredDeviceIDKey),
+            selected.id
+        )
+        XCTAssertEqual(service.reconnectableDevice?.id, selected.id)
+    }
+
+    func testSelectingAnotherScannerWhileConnectedIsIgnored() {
+        let defaults = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let service = BluetoothScannerService(defaults: defaults)
+        service.startDiscovery()
+        let connected = service.devices[0]
+        service.connectSelectedDevice(connected)
+
+        service.connectSelectedDevice(BluetoothScannerDevice(id: "OTHER", name: "HPRT-636E"))
+
+        XCTAssertEqual(service.connectedDevice, connected)
+        XCTAssertEqual(
+            defaults.string(forKey: BluetoothScannerService.preferredDeviceIDKey),
+            connected.id
+        )
+        XCTAssertTrue(
+            service.diagnosticEvents.contains {
+                $0.message.contains("disconnect the connected scanner first")
+            }
+        )
+    }
+
     func testGATTModeSuccessorIsTheScannerRenamedWithTheSameSuffix() {
         let origin = BluetoothScannerDevice(id: "2B94A2A1", name: "Hyper 160B-4F5F-UNI")
         let renamed = BluetoothScannerDevice(id: "4CD0F65B", name: "HPRT-4F5F")

@@ -302,7 +302,7 @@ struct SettingsScreen: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(AppTheme.green)
-                        .disabled(isSearching || isConnecting)
+                        .disabled(isSearching || bluetoothScanner.connectingDeviceID == knownDevice.id)
                         .accessibilityIdentifier("knownScannerReconnectButton")
                     }
 
@@ -321,7 +321,7 @@ struct SettingsScreen: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(AppTheme.green)
-                    .disabled(isSearching || isConnecting)
+                    .disabled(isSearching)
                     .accessibilityIdentifier("searchBluetoothScannerButton")
                 } else {
                     Button {
@@ -339,7 +339,7 @@ struct SettingsScreen: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(AppTheme.green)
-                    .disabled(isSearching || isConnecting)
+                    .disabled(isSearching)
                     .accessibilityIdentifier("searchBluetoothScannerButton")
                 }
 
@@ -359,7 +359,7 @@ struct SettingsScreen: View {
                     VStack(spacing: 8) {
                         ForEach(visibleDiscoveredDevices) { device in
                             Button {
-                                bluetoothScanner.connect(device)
+                                bluetoothScanner.connectSelectedDevice(device)
                             } label: {
                                 HStack(spacing: 12) {
                                     Image(systemName: "barcode")
@@ -381,7 +381,8 @@ struct SettingsScreen: View {
                                 .background(AppTheme.ink.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
                             }
                             .buttonStyle(.plain)
-                            .disabled(isConnecting)
+                            // 接続中の端末だけを押せなくし、別の端末を選べば接続し直す（#137）。
+                            .disabled(bluetoothScanner.connectingDeviceID == device.id)
                             .accessibilityIdentifier("bluetoothScannerDevice_\(device.id)")
                         }
                     }
@@ -640,11 +641,6 @@ struct SettingsScreen: View {
     private var visibleDiscoveredDevices: [BluetoothScannerDevice] {
         let reconnectableID = bluetoothScanner.reconnectableDevice?.id
         return bluetoothScanner.devices.filter { $0.id != reconnectableID }
-    }
-
-    private var isConnecting: Bool {
-        if case .connecting = bluetoothScanner.state { return true }
-        return false
     }
 
     private var scannerStatusColor: Color {
