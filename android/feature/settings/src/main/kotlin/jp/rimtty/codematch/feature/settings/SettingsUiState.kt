@@ -57,6 +57,7 @@ object SettingsTestTags {
     const val CONNECT = "settings_scanner_connect"
     const val DISCONNECT = "settings_scanner_disconnect"
     const val RECONNECT = "settings_scanner_reconnect"
+    const val CONNECT_REJECTED = "settings_scanner_connect_rejected"
     const val RETRY = "settings_scanner_retry"
     const val OPEN_BLUETOOTH_SETTINGS = "settings_scanner_open_bluetooth_settings"
     const val SCANNER_ISSUE = "settings_scanner_issue"
@@ -120,6 +121,12 @@ data class SettingsUiState(
         jp.rimtty.codematch.scanner.api.TuningState.UNSUPPORTED,
     /** Retained scan-log events; share and clear are disabled while it is 0. */
     val scanLogCount: Int = 0,
+    /**
+     * The adapter refused the last Connect/Reconnect request (for example an
+     * established link must be disconnected first). Shown until the next
+     * scanner action, so a tap is never silently dropped (#137).
+     */
+    val connectRequestRejected: Boolean = false,
 ) {
     /** Compatibility/readability aliases for hosts that name these values explicitly. */
     val appSettings: AppSettings get() = settings
@@ -130,6 +137,17 @@ data class SettingsUiState(
     val selectedDevice: ScannerDevice?
         get() = devices.firstOrNull { it.id == selectedDeviceId }
             ?: connectionState.connectedDevice
+
+    /**
+     * The scanner that Reconnect/Retry targets (#137): the device the operator
+     * selected in the list, or null to fall back to the adapter's known device.
+     */
+    val reconnectTarget: ScannerDevice?
+        get() = devices.firstOrNull { it.id == selectedDeviceId }
+
+    /** The device a connection attempt is currently in flight for, if any. */
+    val connectingDevice: ScannerDevice?
+        get() = (connectionState as? ConnectionState.Connecting)?.device
     val scannerPresentation: SettingsPresentationState get() = presentation
     val presentationState: SettingsPresentationState get() = presentation
     val showSetupGuide: Boolean get() = setupGuideVisible

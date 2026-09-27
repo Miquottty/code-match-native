@@ -73,6 +73,9 @@
     <string name="settings_scanner_configuration_failed_description">The settings could not be verified, so scanning has not started. Reconnect and try again.</string>
     <string name="settings_scanner_restore_failed_title">Could not restore scanner settings</string>
     <string name="settings_scanner_restore_failed_description">Scanning is blocked for safety. Reconnect the scanner to retry restoration.</string>
+    <string name="settings_scanner_reselect_title">Select the scanner again</string>
+    <string name="settings_scanner_reselect_description">The scanner was switched to GATT mode. Tap “Search for scanners”, then select the scanner that appears and connect.</string>
+    <string name="settings_connect_rejected">Could not start the connection. If a scanner is connected, disconnect it first and try again.</string>
     <string name="settings_scanner_retry">Try again</string>
     <string name="settings_scanner_open_settings">Bluetooth settings</string>
 

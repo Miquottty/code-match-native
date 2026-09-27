@@ -49,6 +49,9 @@ internal class InateckSdkTransport(
 
     override var listener: BleTransportListener? = null
 
+    /** Host observer of every discovered scanner (GATT-switch follow-up, #137). */
+    var onDeviceDiscovered: ((ScannerDevice) -> Unit)? = null
+
     override val availability: BleAvailability
         get() = readGatewayReadiness().availability
 
@@ -132,13 +135,11 @@ internal class InateckSdkTransport(
         val accepted = gateway.startDiscovery(
             onDevice = { sdkDevice ->
                 if (!closed && discovering && discovery == discoveryGeneration) {
+                    val device = ScannerDevice(sdkDevice.id, sdkDevice.name)
                     listener?.onTransportEvent(
-                        BleTransportEvent.DeviceFound(
-                            BleDiscoveredDevice(
-                                ScannerDevice(sdkDevice.id, sdkDevice.name),
-                            ),
-                        ),
+                        BleTransportEvent.DeviceFound(BleDiscoveredDevice(device)),
                     )
+                    onDeviceDiscovered?.invoke(device)
                 }
             },
             onFinished = {

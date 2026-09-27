@@ -16,6 +16,7 @@ import jp.rimtty.codematch.scanner.api.ScanFormat
 import jp.rimtty.codematch.scanner.api.IlluminationState
 import jp.rimtty.codematch.scanner.api.TuningState
 import jp.rimtty.codematch.scanner.api.ScannerDevice
+import jp.rimtty.codematch.scanner.api.ScannerFailureReasons
 import jp.rimtty.codematch.scanner.ble.BleConnectionCoordinator
 import jp.rimtty.codematch.scanner.ble.BleKnownDeviceStore
 import jp.rimtty.codematch.scanner.ble.BleScannerSessionCoordinator
@@ -44,6 +45,7 @@ private const val TUNING_ATTEMPT_LIMIT = 10
  */
 class InateckExternalScanner private constructor(
     private val delegate: SelectableBleExternalScanner,
+    private val connection: BleConnectionCoordinator,
     private val transport: InateckSdkTransport,
     private val handler: Handler,
     private val nowMillis: () -> Long,
@@ -223,8 +225,79 @@ class InateckExternalScanner private constructor(
     private var closed = false
     private var resetAcknowledged = false
     private var reconnectScheduled = false
+    private val resetReconnect = Runnable {
+        reconnectScheduled = false
+        if (!closed && !gattSwitch.isActive) delegate.reconnectKnownDevice()
+    }
     private val startupRecovery = InateckStartupRecovery {
-        if (closed) false else delegate.reconnectKnownDevice()
+        // Never let automatic recovery redirect or reset a connection the
+        // operator (or the GATT-switch follow-up) has already started (#137).
+        if (closed || gattSwitch.isActive || delegate.queuedSelection != null ||
+            delegate.connectionState is ConnectionState.Connecting
+        ) {
+            false
+        } else {
+            delegate.reconnectKnownDevice()
+        }
+    }
+
+    /** Follows a scanner restarted in GATT mode under a new identity (#137). */
+    private val gattSwitch = InateckGattSwitch(
+        operations = object : InateckGattSwitch.Operations {
+            override val isLinkActive: Boolean
+                get() = transport.isLinkActive
+            override val isSearching: Boolean
+                get() = delegate.connectionState is ConnectionState.Searching
+
+            override fun forgetKnownDevice(deviceId: String) =
+                connection.forgetKnownDevice(deviceId)
+
+            override fun startDiscovery(): Boolean = delegate.startDiscovery()
+
+            override fun connect(device: ScannerDevice): Boolean = delegate.connect(device)
+
+            override fun requireManualSelection() {
+                connection.publishFailure(ScannerFailureReasons.RESELECT_AFTER_GATT_SWITCH)
+            }
+
+            override fun diagnostic(message: String, error: Boolean) =
+                connection.recordDiagnostic(message, error)
+        },
+        nowMillis = nowMillis,
+    )
+
+    private fun onGattModeEvent(event: InateckGattModeEvent) {
+        if (closed) return
+        when (event) {
+            is InateckGattModeEvent.Confirmed ->
+                connection.recordDiagnostic("Scanner Bluetooth mode confirmed: GATT (2)")
+            is InateckGattModeEvent.Unknown ->
+                connection.recordDiagnostic("Scanner Bluetooth mode could not be read; continuing")
+            is InateckGattModeEvent.SwitchStarted -> {
+                connection.recordDiagnostic(
+                    "Scanner Bluetooth mode is ${event.mode}; applying GATT mode (2)",
+                )
+                gattSwitch.begin(ScannerDevice(event.deviceId, event.deviceName))
+            }
+            is InateckGattModeEvent.Restarting ->
+                connection.recordDiagnostic("Scanner restart accepted after GATT mode change")
+            is InateckGattModeEvent.SwitchFailed -> {
+                connection.recordDiagnostic("GATT mode switch failed", error = true)
+                gattSwitch.cancel()
+            }
+        }
+    }
+
+    /**
+     * The operator's action always wins (#137): stop following a GATT switch
+     * and drop a delayed reconnect scheduled after a transport reset.
+     */
+    private fun cancelAutomaticFollowUps() {
+        gattSwitch.cancel()
+        if (reconnectScheduled) {
+            handler.removeCallbacks(resetReconnect)
+            reconnectScheduled = false
+        }
     }
 
     private val ticker = object : Runnable {
@@ -233,6 +306,7 @@ class InateckExternalScanner private constructor(
             transport.refreshReadiness()
             if (closed) return
             delegate.tick(nowMillis())
+            gattSwitch.tick()
             reconcileTransportReset()
             refreshIllumination()
             refreshTuning()
@@ -241,6 +315,8 @@ class InateckExternalScanner private constructor(
     }
 
     init {
+        gateway.setGattModeListener(::onGattModeEvent)
+        transport.onDeviceDiscovered = { device -> if (!closed) gattSwitch.onDeviceDiscovered(device) }
         delegate.addListener(illuminationConnectionObserver)
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         handler.post(ticker)
@@ -282,27 +358,37 @@ class InateckExternalScanner private constructor(
 
     override fun startDiscovery(): Boolean {
         transport.refreshReadiness()
-        return if (closed) false else delegate.startDiscovery()
+        if (closed) return false
+        cancelAutomaticFollowUps()
+        return delegate.startDiscovery()
     }
 
     override fun stopDiscovery(): Boolean {
         transport.refreshReadiness()
-        return if (closed) false else delegate.stopDiscovery()
+        if (closed) return false
+        cancelAutomaticFollowUps()
+        return delegate.stopDiscovery()
     }
 
     override fun connect(device: ScannerDevice): Boolean {
         transport.refreshReadiness()
-        return if (closed) false else delegate.connect(device)
+        if (closed) return false
+        cancelAutomaticFollowUps()
+        return delegate.connect(device)
     }
 
     override fun disconnect(): Boolean {
         transport.refreshReadiness()
-        return if (closed) false else delegate.disconnect()
+        if (closed) return false
+        cancelAutomaticFollowUps()
+        return delegate.disconnect()
     }
 
     override fun reconnectKnownDevice(): Boolean {
         transport.refreshReadiness()
-        return if (closed) false else delegate.reconnectKnownDevice()
+        if (closed) return false
+        cancelAutomaticFollowUps()
+        return delegate.reconnectKnownDevice()
     }
 
     override fun setExpectedFormat(format: ScanFormat?): Boolean {
@@ -341,6 +427,10 @@ class InateckExternalScanner private constructor(
         closed = true
         illuminationGeneration++
         tuningGeneration++
+        gattSwitch.cancel()
+        handler.removeCallbacks(resetReconnect)
+        gateway.setGattModeListener(null)
+        transport.onDeviceDiscovered = null
         illuminationObservers.clear()
         deferredSettings.clear()
         delegate.removeListener(illuminationConnectionObserver)
@@ -360,13 +450,7 @@ class InateckExternalScanner private constructor(
         delegate.onTransportResetCompleted()
         if (!reconnectScheduled) {
             reconnectScheduled = true
-            handler.postDelayed(
-                {
-                    reconnectScheduled = false
-                    if (!closed) delegate.reconnectKnownDevice()
-                },
-                RESET_RECONNECT_DELAY_MILLIS,
-            )
+            handler.postDelayed(resetReconnect, RESET_RECONNECT_DELAY_MILLIS)
         }
     }
 
@@ -429,7 +513,7 @@ class InateckExternalScanner private constructor(
                     )
                 },
             )
-            return InateckExternalScanner(delegate, transport, handler, nowMillis, gateway)
+            return InateckExternalScanner(delegate, connection, transport, handler, nowMillis, gateway)
         }
     }
 }

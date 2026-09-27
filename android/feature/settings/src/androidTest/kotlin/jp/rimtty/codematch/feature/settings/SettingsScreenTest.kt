@@ -495,6 +495,21 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun refusedConnectRequestIsShown() {
+        composeRule.setContent {
+            MaterialTheme {
+                SettingsScreen(
+                    state = SettingsUiState(connectRequestRejected = true),
+                    onAction = {},
+                )
+            }
+        }
+        composeRule.onNodeWithTag(SettingsTestTags.CONNECT_REJECTED)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    @Test
     fun connectingScannerShowsProgressUntilConnectionCompletes() {
         val device = ScannerDevice("scanner-1", "Scanner one")
         val state = mutableStateOf(
@@ -513,9 +528,19 @@ class SettingsScreenTest {
         composeRule.onNodeWithTag(SettingsTestTags.SCANNER_PROGRESS)
             .performScrollTo()
             .assertIsDisplayed()
+        // #137: searching and choosing another scanner stay available while a
+        // connection is pending; only the device being connected is disabled.
         composeRule.onNodeWithTag(SettingsTestTags.DISCOVERY)
             .performScrollTo()
+            .assertIsEnabled()
+        composeRule.onNodeWithTag(SettingsTestTags.CONNECT)
+            .performScrollTo()
             .assertIsNotEnabled()
+        val other = ScannerDevice("scanner-2", "Scanner two")
+        state.value = state.value.copy(devices = listOf(device, other), selectedDeviceId = other.id)
+        composeRule.onNodeWithTag(SettingsTestTags.CONNECT)
+            .performScrollTo()
+            .assertIsEnabled()
 
         state.value = state.value.copy(connectionState = ConnectionState.Connected(device))
         composeRule.onAllNodesWithTag(SettingsTestTags.SCANNER_PROGRESS).assertCountEquals(0)

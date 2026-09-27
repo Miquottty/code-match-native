@@ -31,6 +31,16 @@ fun interface BleSessionCoordinatorFactory {
  * flight: its pre-session inventory is persisted under its own device id, so it is
  * restored on that scanner's next connection and can never be redirected to the
  * new scanner (#135).
+ *
+ * An operator's [connect] always targets the chosen scanner (#137). It pre-empts
+ * every automatic recovery of the previous one: the choice becomes the known
+ * device at once, reconnect timers stop, a running discovery stops, and a
+ * requested but not yet established link to the previous scanner is closed. The
+ * choice is then connected as soon as no link remains ([tick] finishes a close
+ * that completes asynchronously); meanwhile [connectionState] reports it as
+ * Connecting. Only an established link that is not being closed refuses the
+ * choice: the operator disconnects it first. [startDiscovery] likewise closes a
+ * pending, not yet established link before searching.
  */
 class SelectableBleExternalScanner(
     private val connectionCoordinator: BleConnectionCoordinator,
@@ -41,6 +51,10 @@ class SelectableBleExternalScanner(
     private var lastConnectionState: ConnectionState? = null
     private var lastConfigurationState: ConfigurationState? = null
     private var closed = false
+    /** Operator choice waiting for the previous link to close (#137). */
+    private var pendingSelection: ScannerDevice? = null
+    /** Operator search waiting for a cancelled pending link to close. */
+    private var discoveryAfterClose = false
 
     init {
         connectionCoordinator.setListener(this)
@@ -50,8 +64,13 @@ class SelectableBleExternalScanner(
         get() = connectionCoordinator.devices
 
     override val connectionState: ConnectionState
-        get() = sessionCoordinator?.state?.connection?.asApiState()
+        get() = pendingSelection?.let { ConnectionState.Connecting(it) }
+            ?: sessionCoordinator?.state?.connection?.asApiState()
             ?: connectionCoordinator.connectionState.asApiState()
+
+    /** Operator choice that will be connected once the previous link closes. */
+    val queuedSelection: ScannerDevice?
+        get() = pendingSelection
 
     override val configurationState: ConfigurationState
         get() = sessionCoordinator?.state?.configuration
@@ -88,26 +107,67 @@ class SelectableBleExternalScanner(
 
     override fun startDiscovery(): Boolean {
         if (closed) return false
-        return sessionCoordinator?.startDiscovery() ?: connectionCoordinator.startDiscovery()
+        // An operator search supersedes a queued choice and closes a pending,
+        // not yet established link (for example an automatic reconnect).
+        if (pendingSelection != null) {
+            pendingSelection = null
+            publishCurrent()
+        }
+        if (!connectionCoordinator.hasEstablishedLink &&
+            connectionCoordinator.connectingDevice != null
+        ) {
+            connectionCoordinator.cancelPendingConnection()
+            if (connectionCoordinator.hasPhysicalLink) {
+                discoveryAfterClose = connectionCoordinator.isCloseInFlight
+                return discoveryAfterClose
+            }
+        }
+        discoveryAfterClose = false
+        return startDiscoveryNow()
     }
+
+    private fun startDiscoveryNow(): Boolean =
+        sessionCoordinator?.startDiscovery() ?: connectionCoordinator.startDiscovery()
 
     override fun stopDiscovery(): Boolean {
         if (closed) return false
         return sessionCoordinator?.stopDiscovery() ?: connectionCoordinator.stopDiscovery()
     }
 
+    /**
+     * Operator choice (#137): always connect [device], pre-empting automatic
+     * recovery of the previous scanner. Returns false only when an established
+     * link that is not being closed exists (disconnect it first), when the
+     * choice cannot be persisted, or when the connection cannot start.
+     */
     override fun connect(device: ScannerDevice): Boolean {
-        if (closed || !bind(device)) return false
-        return requireNotNull(sessionCoordinator).connect(device)
+        if (closed) return false
+        if (connectionCoordinator.hasEstablishedLink && !connectionCoordinator.isClosingLink) {
+            return false
+        }
+        discoveryAfterClose = false
+        if (!connectionCoordinator.preferSelectedDevice(device)) return false
+        pendingSelection = device
+        val started = resolvePendingSelection()
+        publishCurrent()
+        return started ?: true
     }
 
     override fun disconnect(): Boolean {
         if (closed) return false
-        return sessionCoordinator?.disconnect() ?: connectionCoordinator.disconnect()
+        val hadQueuedRequest = pendingSelection != null || discoveryAfterClose
+        pendingSelection = null
+        discoveryAfterClose = false
+        if (hadQueuedRequest) publishCurrent()
+        return (sessionCoordinator?.disconnect() ?: connectionCoordinator.disconnect()) ||
+            hadQueuedRequest
     }
 
     override fun reconnectKnownDevice(): Boolean {
         if (closed) return false
+        // A queued operator choice owns the next connection; automatic or
+        // repeated recovery requests must not redirect or reset it.
+        if (pendingSelection != null) return resolvePendingSelection() ?: true
         val device = connectionCoordinator.knownDevice
             ?: connectionCoordinator.loadKnownDevice()
             ?: return false
@@ -143,10 +203,64 @@ class SelectableBleExternalScanner(
     /** Advance command/reconnect deadlines from the Android host scheduler. */
     fun tick(atMillis: Long): BleScannerSessionCoordinator.BleScannerTickResult? {
         if (closed) return null
-        return sessionCoordinator?.tick(atMillis) ?: run {
+        val result = sessionCoordinator?.tick(atMillis) ?: run {
             connectionCoordinator.tick(atMillis)
             null
         }
+        if (!closed) resolveQueuedOperatorRequests()
+        return result
+    }
+
+    /** Finish an operator choice or search that waited for a link to close. */
+    private fun resolveQueuedOperatorRequests() {
+        if (pendingSelection != null) {
+            val selection = pendingSelection
+            val waitingForOwnAttempt =
+                connectionCoordinator.connectingDevice?.id == selection?.id
+            if (connectionCoordinator.hasPhysicalLink &&
+                !connectionCoordinator.isCloseInFlight &&
+                !waitingForOwnAttempt
+            ) {
+                // The close failed or was never accepted. Stop presenting the
+                // choice as Connecting; the retained link's failure is shown.
+                pendingSelection = null
+                publishCurrent()
+            } else if (resolvePendingSelection() != null) {
+                publishCurrent()
+            }
+        }
+        if (discoveryAfterClose) {
+            if (!connectionCoordinator.hasPhysicalLink) {
+                discoveryAfterClose = false
+                startDiscoveryNow()
+            } else if (!connectionCoordinator.isCloseInFlight) {
+                discoveryAfterClose = false
+            }
+        }
+    }
+
+    /**
+     * Connect the queued choice when no other link remains. Returns null while
+     * still waiting, otherwise whether the connection request was accepted.
+     */
+    private fun resolvePendingSelection(): Boolean? {
+        val selection = pendingSelection ?: return null
+        val current = sessionCoordinator
+        if (current?.device?.id == selection.id) {
+            if (connectionCoordinator.connectingDevice?.id == selection.id &&
+                !connectionCoordinator.isClosingLink
+            ) {
+                // Already connecting to the chosen scanner.
+                pendingSelection = null
+                return true
+            }
+            if (connectionCoordinator.hasPhysicalLink) return null
+        } else if (current != null && !canReplace(current)) {
+            return null
+        }
+        pendingSelection = null
+        if (!bind(selection)) return false
+        return requireNotNull(sessionCoordinator).connect(selection)
     }
 
     /** A timed-out settings command can resume only after physical link reset. */
@@ -164,7 +278,7 @@ class SelectableBleExternalScanner(
     }
 
     override fun onStateChanged(state: BleScannerState) {
-        if (!closed) publish(state.connection.asApiState(), state.configuration)
+        if (!closed) publishCurrent()
     }
 
     override fun onScanPayload(payload: ScanPayload) {
@@ -190,13 +304,11 @@ class SelectableBleExternalScanner(
         created.onPayload = { payload ->
             if (!closed) mutableListener?.onScanPayload(payload)
         }
-        created.setListener { state ->
-            if (!closed) {
-                publish(state.connection.asApiState(), state.configuration)
-            }
+        created.setListener {
+            if (!closed) publishCurrent()
         }
         sessionCoordinator = created
-        publish(created.state.connection.asApiState(), created.state.configuration)
+        publishCurrent()
         return true
     }
 
@@ -222,6 +334,10 @@ class SelectableBleExternalScanner(
     private fun isSettledWithoutLink(current: BleScannerSessionCoordinator): Boolean =
         !current.isOperationInFlight &&
             current.state.symbology != BleSymbologySessionState.AwaitingTransportReset
+
+    private fun publishCurrent() {
+        publish(connectionState, configurationState)
+    }
 
     private fun publish(connection: ConnectionState, configuration: ConfigurationState) {
         val currentListener = mutableListener

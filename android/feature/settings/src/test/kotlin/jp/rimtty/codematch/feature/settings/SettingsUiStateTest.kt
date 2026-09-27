@@ -48,6 +48,36 @@ class SettingsUiStateTest {
     }
 
     @Test
+    fun reconnectTargetIsOnlyAListedSelectionAndConnectingDeviceIsExposed() {
+        val first = ScannerDevice(id = "first", name = "First")
+        val second = ScannerDevice(id = "second", name = "Second")
+        val connecting = SettingsUiState(
+            devices = listOf(first, second),
+            selectedDeviceId = second.id,
+            connectionState = ConnectionState.Connecting(first),
+        )
+        assertEquals(second, connecting.reconnectTarget)
+        assertEquals(first, connecting.connectingDevice)
+        assertEquals(null, connecting.copy(selectedDeviceId = "gone").reconnectTarget)
+        assertEquals(null, SettingsUiState(connectionState = ConnectionState.Connected(first)).reconnectTarget)
+        assertFalse(SettingsUiState().connectRequestRejected)
+    }
+
+    @Test
+    fun unresolvedGattSwitchAsksForReselection() {
+        val state = SettingsUiState(
+            connectionState = ConnectionState.Failed(
+                jp.rimtty.codematch.scanner.api.ScannerFailureReasons.RESELECT_AFTER_GATT_SWITCH,
+            ),
+        )
+        assertEquals(ScannerIssue.RESELECT_REQUIRED, state.resolvedScannerIssue)
+        assertEquals(
+            ScannerIssue.CONNECTION_FAILED,
+            SettingsUiState(connectionState = ConnectionState.Failed("other")).resolvedScannerIssue,
+        )
+    }
+
+    @Test
     fun releasePresentationIsExplicitAndCameraOnly() {
         val state = SettingsUiState(
             presentation = SettingsPresentationState.RELEASE_CAMERA_ONLY,

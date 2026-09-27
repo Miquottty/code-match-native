@@ -8,6 +8,7 @@ import jp.rimtty.codematch.core.data.ScanLogRepository
 import jp.rimtty.codematch.core.data.SettingsRepository
 import jp.rimtty.codematch.core.model.ScanLogEvent
 import jp.rimtty.codematch.feature.settings.SettingsPresentationState
+import jp.rimtty.codematch.feature.settings.SettingsScannerCommands
 import jp.rimtty.codematch.feature.settings.SettingsUiAction
 import jp.rimtty.codematch.feature.settings.SettingsUiState
 import jp.rimtty.codematch.feedback.FeedbackPlayer
@@ -98,28 +99,34 @@ class SettingsViewModel @Inject constructor(
                 _state.update { it.copy(setupGuideVisible = false) }
             SettingsUiAction.StartDiscovery -> {
                 scanner.startDiscovery()
-                refreshScannerState()
+                updateAfterScannerRequest(accepted = true)
             }
             SettingsUiAction.StopDiscovery -> {
                 scanner.stopDiscovery()
-                refreshScannerState()
+                updateAfterScannerRequest(accepted = true)
             }
             is SettingsUiAction.SelectDevice ->
-                _state.update { it.copy(selectedDeviceId = action.device.id) }
+                _state.update {
+                    it.copy(selectedDeviceId = action.device.id, connectRequestRejected = false)
+                }
             is SettingsUiAction.Connect -> {
-                scanner.connect(action.device)
-                _state.update { scannerState(it.copy(selectedDeviceId = action.device.id)) }
+                // The selection is recorded first so a later Reconnect/Retry
+                // targets this scanner (#137).
+                _state.update { it.copy(selectedDeviceId = action.device.id) }
+                val accepted = SettingsScannerCommands.connect(scanner, action.device)
+                updateAfterScannerRequest(accepted)
             }
             SettingsUiAction.Disconnect -> {
                 scanner.disconnect()
-                refreshScannerState()
+                updateAfterScannerRequest(accepted = true)
             }
             SettingsUiAction.Reconnect -> {
-                scanner.reconnectKnownDevice()
-                refreshScannerState()
+                val accepted = SettingsScannerCommands.reconnect(scanner, _state.value)
+                updateAfterScannerRequest(accepted)
             }
             SettingsUiAction.RetryScanner -> {
-                retryScanner()
+                val accepted = SettingsScannerCommands.retry(scanner, _state.value)
+                updateAfterScannerRequest(accepted)
             }
             is SettingsUiAction.SetAutoAdvanceEnabled ->
                 viewModelScope.launch { repository.setAutoAdvanceEnabled(action.enabled) }
@@ -164,31 +171,9 @@ class SettingsViewModel @Inject constructor(
         },
     )
 
-    private fun retryScanner() {
-        when {
-            scanner.connectionState is ConnectionState.Searching -> {
-                scanner.stopDiscovery()
-                scanner.startDiscovery()
-            }
-            scanner.connectionState.isConnected &&
-                scanner.configurationState is jp.rimtty.codematch.scanner.api.ConfigurationState.Failed -> {
-                // A failed recovery/configuration must not be marked Ready by
-                // the UI. Reconnect is the adapter-neutral way to obtain a
-                // fresh handshake; the adapter owns the actual protocol.
-                scanner.disconnect()
-                scanner.reconnectKnownDevice()
-            }
-            scanner.connectionState.isConnected -> {
-                // A connected/ready scanner has nothing to retry. Keep this
-                // branch side-effect free so a stale button cannot rewrite
-                // scanner settings.
-            }
-            else -> {
-                val reconnected = scanner.reconnectKnownDevice()
-                if (!reconnected) scanner.startDiscovery()
-            }
-        }
-        refreshScannerState()
+    /** A refused connection request is surfaced, never silently dropped (#137). */
+    private fun updateAfterScannerRequest(accepted: Boolean) {
+        _state.update { scannerState(it.copy(connectRequestRejected = !accepted)) }
     }
 
     private companion object {

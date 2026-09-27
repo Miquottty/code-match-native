@@ -114,11 +114,24 @@ enum class ScannerIssue {
     CONNECTION_FAILED,
     CONFIGURATION_FAILED,
     RESTORE_FAILED,
+    /**
+     * The scanner was switched to GATT mode and restarted, but the restarted
+     * scanner could not be identified; the operator picks it from the search
+     * results (#137).
+     */
+    RESELECT_REQUIRED,
     ;
 
     val isActionable: Boolean get() = this != NONE
     val requiresSystemSettings: Boolean
         get() = this == PERMISSION_DENIED || this == POWERED_OFF
+}
+
+/** Adapter failure reasons that carry a typed meaning for the UI. */
+object ScannerFailureReasons {
+    /** Published by an adapter after an unresolved GATT mode switch. */
+    const val RESELECT_AFTER_GATT_SWITCH =
+        "Scanner switched to GATT mode; select it from the search results"
 }
 
 /** Compatibility spellings for hosts that call this a Bluetooth issue. */
@@ -210,10 +223,12 @@ fun scannerIssueFor(
 
     return when (connectionState) {
         is ConnectionState.Unavailable -> classifyUnavailable(connectionState.reason)
-        is ConnectionState.Failed -> classifyScannerFailure(
-            connectionState.reason,
-            ScannerIssue.CONNECTION_FAILED,
-        )
+        is ConnectionState.Failed ->
+            if (connectionState.reason == ScannerFailureReasons.RESELECT_AFTER_GATT_SWITCH) {
+                ScannerIssue.RESELECT_REQUIRED
+            } else {
+                classifyScannerFailure(connectionState.reason, ScannerIssue.CONNECTION_FAILED)
+            }
         else -> ScannerIssue.NONE
     }
 }

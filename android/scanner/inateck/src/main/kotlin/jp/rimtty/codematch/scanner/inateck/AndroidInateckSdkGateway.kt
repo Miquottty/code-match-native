@@ -41,6 +41,7 @@ internal class AndroidInateckSdkGateway(
     private val operationGate = InateckOperationGate()
     private var disconnectingDevice: BleScannerDevice? = null
     private var closed = false
+    private var gattModeListener: ((InateckGattModeEvent) -> Unit)? = null
 
     init {
         BleListManager.init(application)
@@ -126,6 +127,7 @@ internal class AndroidInateckSdkGateway(
         var earlyOutputResponse: ByteArray? = null
         var outputHandshakeHandled = false
         var outputHandshakeTimeout: Runnable? = null
+        var modeCheckStarted = false
 
         fun finishOutputHandshakeIfReady() {
             if (outputHandshakeHandled || !outputWriteSucceeded ||
@@ -168,6 +170,231 @@ internal class AndroidInateckSdkGateway(
             finishOutputHandshakeIfReady()
         }
 
+        fun startOutputSetup() {
+            if (!isCurrentAttempt(device, attempt) || outputSetupStarted) return
+            outputSetupStarted = true
+            val command = hidOutputCommandProvider.commandForSdkOutput()
+            if (command == null) {
+                failPendingConnection(
+                    device = device,
+                    attempt = attempt,
+                    connectCompletionDelivered = connectCompletionDelivered,
+                    completion = completion,
+                    reason = "Inateck SDK output command unavailable",
+                ) { connectCompletionDelivered = true }
+                return
+            }
+            val outputWriteTimeout = Runnable {
+                if (!outputHandshakeHandled &&
+                    isCurrentAttempt(device, attempt) &&
+                    !connectCompletionDelivered
+                ) {
+                    outputHandshakeHandled = true
+                    failPendingConnection(
+                        device = device,
+                        attempt = attempt,
+                        connectCompletionDelivered = false,
+                        completion = completion,
+                        reason = "Inateck SDK output configuration timed out",
+                    ) { connectCompletionDelivered = true }
+                }
+            }
+            outputHandshakeTimeout = outputWriteTimeout
+            mainHandler.postDelayed(
+                outputWriteTimeout,
+                SDK_OUTPUT_WRITE_TIMEOUT_MILLIS,
+            )
+            InateckNotificationBridge.writeSdkOutputCommand(
+                device,
+                command,
+                object : InateckNotificationBridge.WriteCallback {
+                    override fun onSuccess() {
+                        dispatch {
+                            if (outputHandshakeHandled ||
+                                !isCurrentAttempt(device, attempt)
+                            ) {
+                                return@dispatch
+                            }
+                            outputWriteSucceeded = true
+                            // The iOS adapter for this scanner family
+                            // deliberately waits one second after the
+                            // write-only SDK-output command. FF01 may
+                            // deliver a late control response during
+                            // this interval; keep it out of the first
+                            // getSettingInfo task.
+                            mainHandler.postDelayed(
+                                {
+                                    outputSettleElapsed = true
+                                    finishOutputHandshakeIfReady()
+                                },
+                                SDK_OUTPUT_SETTLE_MILLIS,
+                            )
+                            earlyOutputResponse?.let { response ->
+                                earlyOutputResponse = null
+                                acceptOutputResponse(response)
+                            }
+                        }
+                    }
+
+                    override fun onFailure() {
+                        dispatch {
+                            if (outputHandshakeHandled ||
+                                !isCurrentAttempt(device, attempt)
+                            ) {
+                                return@dispatch
+                            }
+                            outputHandshakeHandled = true
+                            mainHandler.removeCallbacks(outputWriteTimeout)
+                            failPendingConnection(
+                                device = device,
+                                attempt = attempt,
+                                connectCompletionDelivered =
+                                    connectCompletionDelivered,
+                                completion = completion,
+                                reason =
+                                    "Inateck SDK output configuration failed",
+                            ) { connectCompletionDelivered = true }
+                        }
+                    }
+                },
+            )
+        }
+
+        /**
+         * Connect-time Bluetooth-mode check (#137, iOS parity). It runs before
+         * the FF04 SDK-output handshake: a scanner outside GATT mode may not
+         * answer that handshake, which used to fail the connection before the
+         * mode could be read. GATT mode (or an unreadable mode) continues with
+         * the unchanged, strict handshake. Any other mode is switched to GATT,
+         * the scanner is restarted, and this connection then ends as a
+         * failure; the host follows the restarted scanner.
+         */
+        fun switchToGattMode(mode: Int) {
+            safeProtocolLog("gatt-mode=switching")
+            gattModeListener?.invoke(
+                InateckGattModeEvent.SwitchStarted(
+                    deviceId = deviceId,
+                    deviceName = device.name?.takeIf(String::isNotBlank) ?: "Inateck scanner",
+                    mode = mode,
+                ),
+            )
+            var switchHandled = false
+            fun failSwitch(reason: String, switchFailed: Boolean) {
+                if (switchHandled || !isCurrentAttempt(device, attempt)) return
+                switchHandled = true
+                if (switchFailed) {
+                    safeProtocolLog("gatt-mode=switch-failed")
+                    gattModeListener?.invoke(InateckGattModeEvent.SwitchFailed(deviceId))
+                }
+                failPendingConnection(
+                    device = device,
+                    attempt = attempt,
+                    connectCompletionDelivered = connectCompletionDelivered,
+                    completion = completion,
+                    reason = reason,
+                ) { connectCompletionDelivered = true }
+            }
+            val switchTimeout = Runnable {
+                failSwitch("Inateck GATT mode switch timed out", switchFailed = true)
+            }
+            mainHandler.postDelayed(switchTimeout, GATT_MODE_SWITCH_TIMEOUT_MILLIS)
+            val written = runCatching {
+                device.messager.setSettingInfo(InateckGattMode.SWITCH_COMMAND) { update ->
+                    dispatch {
+                        if (switchHandled || !isCurrentAttempt(device, attempt)) return@dispatch
+                        if (update.isFailure) {
+                            mainHandler.removeCallbacks(switchTimeout)
+                            failSwitch("Inateck GATT mode switch failed", switchFailed = true)
+                            return@dispatch
+                        }
+                        val restartRequested = runCatching {
+                            device.messager.setRestart { restart ->
+                                dispatch {
+                                    if (switchHandled || !isCurrentAttempt(device, attempt)) {
+                                        return@dispatch
+                                    }
+                                    mainHandler.removeCallbacks(switchTimeout)
+                                    if (restart.isFailure) {
+                                        failSwitch(
+                                            "Inateck restart after GATT mode switch failed",
+                                            switchFailed = true,
+                                        )
+                                        return@dispatch
+                                    }
+                                    safeProtocolLog("gatt-mode=restarting")
+                                    gattModeListener?.invoke(InateckGattModeEvent.Restarting(deviceId))
+                                    // The restart normally drops the link, which
+                                    // completes this attempt as a failure through
+                                    // the disconnect handler. Close it explicitly
+                                    // if the link survives the restart.
+                                    mainHandler.postDelayed(
+                                        {
+                                            failSwitch(
+                                                "Inateck scanner restarting in GATT mode",
+                                                switchFailed = false,
+                                            )
+                                        },
+                                        GATT_RESTART_FALLBACK_MILLIS,
+                                    )
+                                }
+                            }
+                        }.isSuccess
+                        if (!restartRequested) {
+                            mainHandler.removeCallbacks(switchTimeout)
+                            failSwitch(
+                                "Inateck restart after GATT mode switch failed",
+                                switchFailed = true,
+                            )
+                        }
+                    }
+                }
+            }.isSuccess
+            if (!written) {
+                mainHandler.removeCallbacks(switchTimeout)
+                failSwitch("Inateck GATT mode switch failed", switchFailed = true)
+            }
+        }
+
+        fun checkBluetoothMode() {
+            var modeCheckHandled = false
+            fun continueWithMode(mode: Int?) {
+                if (modeCheckHandled || !isCurrentAttempt(device, attempt)) return
+                modeCheckHandled = true
+                when {
+                    mode == null -> {
+                        safeProtocolLog("gatt-mode=unknown")
+                        gattModeListener?.invoke(InateckGattModeEvent.Unknown(deviceId))
+                        startOutputSetup()
+                    }
+                    mode == InateckGattMode.GATT -> {
+                        safeProtocolLog("gatt-mode=confirmed")
+                        gattModeListener?.invoke(InateckGattModeEvent.Confirmed(deviceId))
+                        startOutputSetup()
+                    }
+                    else -> switchToGattMode(mode)
+                }
+            }
+            val readTimeout = Runnable { continueWithMode(null) }
+            mainHandler.postDelayed(readTimeout, GATT_MODE_READ_TIMEOUT_MILLIS)
+            clearPendingScanFrame()
+            val requested = runCatching {
+                device.messager.getSettingInfo { result ->
+                    dispatch {
+                        mainHandler.removeCallbacks(readTimeout)
+                        continueWithMode(
+                            result.getOrNull()
+                                ?.map { entry -> entry.toMap() }
+                                ?.let(InateckGattMode::bluetoothMode),
+                        )
+                    }
+                }
+            }.isSuccess
+            if (!requested) {
+                mainHandler.removeCallbacks(readTimeout)
+                continueWithMode(null)
+            }
+        }
+
         return runCatching {
             device.connect { result ->
                 dispatch {
@@ -185,93 +412,9 @@ internal class AndroidInateckSdkGateway(
                         object : InateckNotificationBridge.Callback {
                             override fun onReady() {
                                 dispatch {
-                                    if (isCurrentAttempt(device, attempt) && !outputSetupStarted) {
-                                        outputSetupStarted = true
-                                        val command = hidOutputCommandProvider.commandForSdkOutput()
-                                        if (command == null) {
-                                            failPendingConnection(
-                                                device = device,
-                                                attempt = attempt,
-                                                connectCompletionDelivered = connectCompletionDelivered,
-                                                completion = completion,
-                                                reason = "Inateck SDK output command unavailable",
-                                            ) { connectCompletionDelivered = true }
-                                            return@dispatch
-                                        }
-                                        val outputWriteTimeout = Runnable {
-                                            if (!outputHandshakeHandled &&
-                                                isCurrentAttempt(device, attempt) &&
-                                                !connectCompletionDelivered
-                                            ) {
-                                                outputHandshakeHandled = true
-                                                failPendingConnection(
-                                                    device = device,
-                                                    attempt = attempt,
-                                                    connectCompletionDelivered = false,
-                                                    completion = completion,
-                                                    reason = "Inateck SDK output configuration timed out",
-                                                ) { connectCompletionDelivered = true }
-                                            }
-                                        }
-                                        outputHandshakeTimeout = outputWriteTimeout
-                                        mainHandler.postDelayed(
-                                            outputWriteTimeout,
-                                            SDK_OUTPUT_WRITE_TIMEOUT_MILLIS,
-                                        )
-                                        InateckNotificationBridge.writeSdkOutputCommand(
-                                            device,
-                                            command,
-                                            object : InateckNotificationBridge.WriteCallback {
-                                                override fun onSuccess() {
-                                                    dispatch {
-                                                        if (outputHandshakeHandled ||
-                                                            !isCurrentAttempt(device, attempt)
-                                                        ) {
-                                                            return@dispatch
-                                                        }
-                                                        outputWriteSucceeded = true
-                                                        // The iOS adapter for this scanner family
-                                                        // deliberately waits one second after the
-                                                        // write-only SDK-output command. FF01 may
-                                                        // deliver a late control response during
-                                                        // this interval; keep it out of the first
-                                                        // getSettingInfo task.
-                                                        mainHandler.postDelayed(
-                                                            {
-                                                                outputSettleElapsed = true
-                                                                finishOutputHandshakeIfReady()
-                                                            },
-                                                            SDK_OUTPUT_SETTLE_MILLIS,
-                                                        )
-                                                        earlyOutputResponse?.let { response ->
-                                                            earlyOutputResponse = null
-                                                            acceptOutputResponse(response)
-                                                        }
-                                                    }
-                                                }
-
-                                                override fun onFailure() {
-                                                    dispatch {
-                                                        if (outputHandshakeHandled ||
-                                                            !isCurrentAttempt(device, attempt)
-                                                        ) {
-                                                            return@dispatch
-                                                        }
-                                                        outputHandshakeHandled = true
-                                                        mainHandler.removeCallbacks(outputWriteTimeout)
-                                                        failPendingConnection(
-                                                            device = device,
-                                                            attempt = attempt,
-                                                            connectCompletionDelivered =
-                                                                connectCompletionDelivered,
-                                                            completion = completion,
-                                                            reason =
-                                                                "Inateck SDK output configuration failed",
-                                                        ) { connectCompletionDelivered = true }
-                                                    }
-                                                }
-                                            },
-                                        )
+                                    if (isCurrentAttempt(device, attempt) && !modeCheckStarted) {
+                                        modeCheckStarted = true
+                                        checkBluetoothMode()
                                     }
                                 }
                             }
@@ -575,6 +718,10 @@ internal class AndroidInateckSdkGateway(
         }
     }
 
+    override fun setGattModeListener(listener: ((InateckGattModeEvent) -> Unit)?) {
+        gattModeListener = listener
+    }
+
     override fun close() {
         if (closed) return
         closed = true
@@ -855,6 +1002,9 @@ internal class AndroidInateckSdkGateway(
         const val SDK_OUTPUT_WRITE_TIMEOUT_MILLIS = 5_000L
         const val SDK_OUTPUT_SETTLE_MILLIS = 1_000L
         const val FAILED_CONNECTION_DISCONNECT_TIMEOUT_MILLIS = 5_000L
+        const val GATT_MODE_READ_TIMEOUT_MILLIS = 6_000L
+        const val GATT_MODE_SWITCH_TIMEOUT_MILLIS = 15_000L
+        const val GATT_RESTART_FALLBACK_MILLIS = 5_000L
     }
 
     private fun dispatch(block: () -> Unit) {
