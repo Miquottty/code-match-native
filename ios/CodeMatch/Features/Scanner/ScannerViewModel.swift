@@ -33,13 +33,9 @@ final class ScannerViewModel: ObservableObject {
     private var barcodeCandidate: (value: String, count: Int, date: Date)?
     private var autoAdvanceTask: Task<Void, Never>?
     private let autoAdvanceTickDuration: Duration
-    /// 接続済みスキャナを初期入力にする一方、利用者がカメラを選んだ後は
-    /// 同じ照合セッション内で自動的にBluetoothへ戻さないためのフラグ。
+    /// 利用者がカメラを選んだ箱の間だけ、Bluetoothへ自動で戻さないためのフラグ。
+    /// 次の照合（QR工程）へ進むと解除し、スキャナ接続中はBluetoothへ戻す（#145）。
     private var cameraWasSelectedByUser = false
-    /// 読み取り設定の失敗が続いた回数。受理できたBluetooth読取でリセットする。
-    private var bluetoothConfigurationFailureCount = 0
-    /// この回数だけ連続で失敗したら、復旧後もBluetoothへ自動で戻さず利用者の再選択に委ねる。
-    static let bluetoothAutomaticReturnFailureLimit = 2
     /// 一時的な非アクティブ化（Control Center、通知センター、着信など）で止めたカメラを、
     /// アクティブへ戻ったときに自動で再開するためのフラグ。
     private var cameraWasRunningBeforeInactive = false
@@ -58,6 +54,14 @@ final class ScannerViewModel: ObservableObject {
         case .barcode: .barcode
         case .result: nil
         }
+    }
+
+    /// スキャナのリンクが確立していて、読み取り設定が失敗で止まっていない。設定中も含む。
+    /// この間は照合の入力元をBluetoothにする（#145）。設定失敗と接続断のときだけカメラへ退避する。
+    private var bluetoothIsUsable: Bool {
+        guard bluetoothScanner.isConnected else { return false }
+        if case .failed = bluetoothScanner.configurationState { return false }
+        return true
     }
 
     private func setLocalizedMessage(_ builder: @escaping () -> String) {
@@ -214,9 +218,12 @@ final class ScannerViewModel: ObservableObject {
         sessionBoxNumber = 0
         // 仕向地はセッション単位の固定なので、次の照合へ進んでも解除しない。
         deliverySummary = nil
-        if inputSource == .bluetooth, bluetoothScanner.isConnected {
+        // カメラの選択はその箱の間だけ。スキャナ接続中は次のQRからBluetoothへ戻す（#145）。
+        cameraWasSelectedByUser = false
+        if bluetoothIsUsable {
+            inputSource = .bluetooth
             bluetoothScanner.setExpectedCode(.qr)
-            setLocalizedMessage { AppLocalization.string("BCST-47で納品書兼現品票のQRコードを読み取ってください。") }
+            updateBluetoothInstruction()
         } else {
             bluetoothScanner.setExpectedCode(nil)
             inputSource = .camera
@@ -242,9 +249,19 @@ final class ScannerViewModel: ObservableObject {
         // 仕向地はセッション単位の固定なので、QRを取り直しても解除しない。
         deliverySummary = nil
 
-        if inputSource == .bluetooth, bluetoothScanner.isConnected {
+        // QRの取り直しは同じ箱の続きなので、利用者が選んだカメラはそのまま使う。
+        // それ以外でスキャナが使えるならBluetoothで取り直す（#145）。
+        if !cameraWasSelectedByUser, bluetoothIsUsable {
+            if inputSource != .bluetooth {
+                activateBluetooth()
+                return
+            }
             bluetoothScanner.setExpectedCode(.qr)
-            setLocalizedMessage { AppLocalization.string("BCST-47で別の納品書兼現品票のQRコードを読み取ってください。") }
+            if bluetoothScanner.isReadyForScanning {
+                setLocalizedMessage { AppLocalization.string("BCST-47で別の納品書兼現品票のQRコードを読み取ってください。") }
+            } else {
+                updateBluetoothInstruction()
+            }
             return
         }
 
@@ -282,12 +299,12 @@ final class ScannerViewModel: ObservableObject {
             activateCamera()
         case .bluetooth:
             cameraWasSelectedByUser = false
-            guard bluetoothScanner.isReadyForScanning else {
+            // 設定中でもリンクがあればBluetoothを選び、完了まで「設定中」を表示する（#145）。
+            guard bluetoothScanner.isReadyForScanning || bluetoothIsUsable else {
                 inputSource = .camera
                 if bluetoothScanner.isConnected,
                    case .failed = bluetoothScanner.configurationState {
                     // 設定失敗で止まっている場合は、利用者の再選択を再設定の合図として扱う。
-                    bluetoothConfigurationFailureCount = 0
                     bluetoothScanner.retryConfiguration()
                     setLocalizedMessage {
                         AppLocalization.string("Bluetoothスキャナの読み取り設定をやり直しています。完了すると自動的に切り替わります。")
@@ -309,12 +326,13 @@ final class ScannerViewModel: ObservableObject {
     func handleBluetoothConnectionState(_ state: BluetoothScannerConnectionState) {
         guard !isEndingSession else { return }
         if state.connectedDevice != nil {
-            guard bluetoothScanner.isReadyForScanning,
+            // 接続済みなら、読み取り設定中でもBluetoothを入力元にする（#145）。
+            guard bluetoothIsUsable,
                   expectedCode != nil,
                   !cameraWasSelectedByUser else { return }
             if inputSource != .bluetooth {
                 activateBluetooth()
-            } else {
+            } else if bluetoothScanner.isReadyForScanning {
                 // 設定中メッセージを、完了した現在工程の案内へ戻す。
                 updateBluetoothInstruction()
             }
@@ -335,12 +353,9 @@ final class ScannerViewModel: ObservableObject {
             handleBluetoothConnectionState(bluetoothScanner.state)
         case .failed(let reason):
             guard inputSource == .bluetooth else { return }
-            // 設定失敗は利用者の選択ではないため、復旧してReadyへ戻ればBluetoothへ自動で戻す。
-            // 失敗が続く場合だけ往復を止め、明示的な再選択に委ねる。
-            bluetoothConfigurationFailureCount += 1
-            if bluetoothConfigurationFailureCount >= Self.bluetoothAutomaticReturnFailureLimit {
-                cameraWasSelectedByUser = true
-            }
+            // 設定失敗は利用者の選択ではないため、カメラへの退避は一時的なもの。
+            // 復旧してReadyへ戻れば、失敗が続いた後でもBluetoothへ自動で戻す（#145）。
+            // 自動の再設定はサービス側で回数に上限があるため、往復は有限回で止まる。
             activateCamera()
             setLocalizedMessage {
                 AppLocalization.string("\(reason) 現在の読取ステップを維持してカメラへ切り替えました。")
@@ -408,6 +423,16 @@ final class ScannerViewModel: ObservableObject {
         cameraWasRunningBeforeInactive = false
         if step == .result(.match) {
             startAutoAdvanceCountdownIfNeeded()
+            return
+        }
+        // 前景へ戻ったとき、利用者が選んだのではないカメラ（接続前・接続断・設定失敗からの退避）で、
+        // スキャナが使える状態ならBluetoothへ戻す（#145）。
+        if !isEndingSession,
+           !cameraWasSelectedByUser,
+           inputSource == .camera,
+           expectedCode != nil,
+           bluetoothIsUsable {
+            activateBluetooth()
             return
         }
         if shouldRestartCamera,
@@ -553,7 +578,6 @@ final class ScannerViewModel: ObservableObject {
             return
         }
         guard !scanLocked, let expectedCode else { return }
-        bluetoothConfigurationFailureCount = 0
 
         switch expectedCode {
         case .qr:
@@ -662,6 +686,12 @@ final class ScannerViewModel: ObservableObject {
     }
 
     private func updateBluetoothInstruction() {
+        guard bluetoothScanner.isReadyForScanning else {
+            setLocalizedMessage {
+                AppLocalization.string("BCST-47の読み取り対象を設定しています。完了するまでお待ちください。")
+            }
+            return
+        }
         setLocalizedMessage {
             self.expectedCode == .qr
                 ? AppLocalization.string("BCST-47で納品書兼現品票のQRコードを読み取ってください。")
