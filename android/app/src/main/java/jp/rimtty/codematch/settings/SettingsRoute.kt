@@ -1,7 +1,6 @@
 package jp.rimtty.codematch.settings
 
 import android.content.Context
-import android.content.Intent
 import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -19,6 +18,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.Instant
+import jp.rimtty.codematch.core.export.BluetoothDiagnosticsExporter
+import jp.rimtty.codematch.core.export.DiagnosticsMailContent
 import jp.rimtty.codematch.core.export.ScanLogJsonExporter
 import jp.rimtty.codematch.history.HistoryJsonBridge
 import jp.rimtty.codematch.history.HistoryJsonResult
@@ -163,13 +164,28 @@ fun SettingsRoute(
                         ).show()
                     }
                 }
-                SettingsUiAction.ShareDiagnostics -> {
-                    val intent = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_SUBJECT, shareSubject)
-                        putExtra(Intent.EXTRA_TEXT, diagnosticLogText(context, state))
+                SettingsUiAction.ShareDiagnostics -> scope.launch {
+                    // #143: open a mail pre-filled for the administrator; the
+                    // operator taps Send. Falls back to the plain text share.
+                    val generatedAt = Instant.now()
+                    val text = diagnosticLogText(context, state)
+                    val mail = DiagnosticsMailContent.build(
+                        summary = diagnosticsMailSummary(context, state),
+                        generatedAt = generatedAt,
+                    )
+                    val file = withContext(Dispatchers.IO) {
+                        runCatching {
+                            BluetoothDiagnosticsExporter.writeToCache(context, text, mail.fileName)
+                        }.getOrNull()
                     }
-                    runCatching { context.startActivity(Intent.createChooser(intent, shareSubject)) }
+                    val intent = DiagnosticsMailBridge.createIntent(
+                        context = context,
+                        file = file,
+                        mail = mail,
+                        fallbackSubject = shareSubject,
+                        diagnosticsText = text,
+                    )
+                    runCatching { context.startActivity(intent) }
                 }
                 SettingsUiAction.SaveDiagnostics -> {
                     pendingLog = diagnosticLogText(context, state)
@@ -201,18 +217,40 @@ private fun scanLogText(
     ),
 )
 
-private fun diagnosticLogText(context: Context, state: SettingsUiState): String {
+private fun appVersion(context: Context): Pair<String, Long> {
     val packageInfo = runCatching {
         context.packageManager.getPackageInfo(context.packageName, 0)
     }.getOrNull()
-    val versionName = packageInfo?.versionName ?: "?"
-    val versionCode = packageInfo?.longVersionCode ?: 0L
+    return (packageInfo?.versionName ?: "?") to (packageInfo?.longVersionCode ?: 0L)
+}
+
+private fun systemLabel(): String = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
+
+/** The mail summary repeats the diagnostics header's labels, nothing more. */
+private fun diagnosticsMailSummary(
+    context: Context,
+    state: SettingsUiState,
+): DiagnosticsMailContent.Summary {
+    val (versionName, versionCode) = appVersion(context)
+    return DiagnosticsMailContent.Summary(
+        versionName = versionName,
+        versionCode = versionCode,
+        deviceModel = Build.MODEL,
+        system = systemLabel(),
+        connection = DiagnosticLogFormatter.connectionLabel(state.connectionState),
+        configuration = DiagnosticLogFormatter.configurationLabel(state.configurationState),
+        eventCount = state.diagnosticEvents.size,
+    )
+}
+
+private fun diagnosticLogText(context: Context, state: SettingsUiState): String {
+    val (versionName, versionCode) = appVersion(context)
     return DiagnosticLogFormatter.format(
         events = state.diagnosticEvents,
         header = DiagnosticLogFormatter.Header(
             appVersion = "$versionName ($versionCode)",
             device = "${Build.MANUFACTURER} ${Build.MODEL}",
-            system = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
+            system = systemLabel(),
             connection = DiagnosticLogFormatter.connectionLabel(state.connectionState),
             configuration = DiagnosticLogFormatter.configurationLabel(state.configurationState),
             illumination = state.illuminationState.name,

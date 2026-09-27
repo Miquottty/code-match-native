@@ -350,9 +350,10 @@ source_hits="$(grep -rn -i -E \
 [[ -z "$source_hits" ]] || die "production source persists or logs frames/images/payloads:"$'\n'"$source_hits"
 
 # The only production code allowed to create files is the export layer: the
-# PDF report and the JSON history export, each writing into its own scoped
-# app-private cache subdirectory that the FileProvider exposes.
-file_hits="$(grep -rn -E '(^|[^[:alnum:]_])File[[:space:]]*\(' "${production_dirs[@]}" --include='*.kt' --include='*.java' | grep -v -E 'core/export/src/main/.*/(History(Pdf|Json)|ScanLogJson)Exporter\.kt:' || true)"
+# PDF report, the JSON history and scan-log exports, and the diagnostics mail
+# attachment, each writing into a scoped app-private cache subdirectory that
+# the FileProvider exposes.
+file_hits="$(grep -rn -E '(^|[^[:alnum:]_])File[[:space:]]*\(' "${production_dirs[@]}" --include='*.kt' --include='*.java' | grep -v -E 'core/export/src/main/.*/(History(Pdf|Json)|ScanLogJson|BluetoothDiagnostics)Exporter\.kt:' || true)"
 [[ -z "$file_hits" ]] || die "production source creates files outside the dedicated exporters:"$'\n'"$file_hits"
 
 analytics_hits="$(grep -rn -i -E 'FirebaseAnalytics|FirebaseCrashlytics|Crashlytics|Sentry|Bugsnag|NewRelic|Datadog|Mixpanel|PostHog|Countly|AnalyticsTracker|CrashReporter' \

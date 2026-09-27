@@ -12,7 +12,8 @@ import jp.rimtty.codematch.scanner.api.DiagnosticEvent
  * Renders the retained BLE diagnostic events as plain text for the share
  * sheet or a SAF document. Events carry only sanitized status strings (the
  * scanner API has no way to record a scan payload), so the export is safe to
- * hand to a third party. Mirrors the iOS "診断ログを共有" export.
+ * hand to a third party. Mirrors the iOS diagnostics export. The same text
+ * is the attachment of the administrator mail (#143).
  */
 object DiagnosticLogFormatter {
     data class Header(
