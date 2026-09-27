@@ -2572,6 +2572,21 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         return lines.joined(separator: "\n")
     }
 
+    /// 診断ログを管理者へ送るメールの件名・本文・添付名（#143）。
+    func diagnosticsMailContent(device: String) -> DiagnosticsMailContent {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info["CFBundleVersion"] as? String ?? "?"
+        return DiagnosticsMailContent.make(
+            appVersion: "\(version) (\(build))",
+            device: device,
+            connectionStatus: state.statusText,
+            eventCount: diagnosticEvents.count,
+            pendingRestoreCount: persistedSymbologySnapshots.count,
+            generatedAt: now()
+        )
+    }
+
     func clearDiagnosticEvents() {
         diagnosticEvents = []
         defaults.removeObject(forKey: Self.diagnosticEventsKey)

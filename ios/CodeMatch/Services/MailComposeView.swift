@@ -1,7 +1,7 @@
 import MessageUI
 import SwiftUI
 
-/// レポートPDFを添付したメール作成画面（Apple の「メール」）。
+/// 添付つきのメール作成画面（Apple の「メール」）。レポートPDFと診断ログ（#143）で使う。
 ///
 /// 宛先・件名・本文を埋めた状態で開き、送信は操作者が行う。「メール」にアカウントがなく
 /// `canSendMail` が false の端末では呼び出し側が共有シートへ切り替える。
@@ -9,11 +9,38 @@ struct MailComposeView: UIViewControllerRepresentable {
     struct Attachment {
         let data: Data
         let fileName: String
+        var mimeType = "application/pdf"
     }
 
-    let content: ReportMailContent
+    let recipients: [String]
+    let subject: String
+    let body: String
     let attachment: Attachment
     let onFinish: () -> Void
+
+    init(
+        recipients: [String],
+        subject: String,
+        body: String,
+        attachment: Attachment,
+        onFinish: @escaping () -> Void
+    ) {
+        self.recipients = recipients
+        self.subject = subject
+        self.body = body
+        self.attachment = attachment
+        self.onFinish = onFinish
+    }
+
+    init(content: ReportMailContent, attachment: Attachment, onFinish: @escaping () -> Void) {
+        self.init(
+            recipients: ReportMailContent.recipients,
+            subject: content.subject,
+            body: content.body,
+            attachment: attachment,
+            onFinish: onFinish
+        )
+    }
 
     static var canSendMail: Bool {
         MFMailComposeViewController.canSendMail()
@@ -22,10 +49,10 @@ struct MailComposeView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> MFMailComposeViewController {
         let controller = MFMailComposeViewController()
         controller.mailComposeDelegate = context.coordinator
-        controller.setToRecipients(ReportMailContent.recipients)
-        controller.setSubject(content.subject)
-        controller.setMessageBody(content.body, isHTML: false)
-        controller.addAttachmentData(attachment.data, mimeType: "application/pdf", fileName: attachment.fileName)
+        controller.setToRecipients(recipients)
+        controller.setSubject(subject)
+        controller.setMessageBody(body, isHTML: false)
+        controller.addAttachmentData(attachment.data, mimeType: attachment.mimeType, fileName: attachment.fileName)
         return controller
     }
 

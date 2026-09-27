@@ -79,3 +79,60 @@ struct ReportMailContent: Equatable {
         }
     }
 }
+
+/// 診断ログを管理者へ送るメールの宛先・件名・本文・添付名（#143）。
+///
+/// 自動送信はしない。宛先入りのメール作成画面を開き、送信は操作者が行う。
+/// 診断ログは読み取った値を含まないため、照合ログ（生の値を含む）は添付しない。
+struct DiagnosticsMailContent: Equatable {
+    /// 診断ログの送り先。レポートの宛先（`ReportMailContent.recipients`）とは別に管理する。
+    static let recipients = ["contact-codematch@googlegroups.com"]
+
+    let subject: String
+    let body: String
+    let fileName: String
+
+    static func make(
+        appVersion: String,
+        device: String,
+        connectionStatus: String,
+        eventCount: Int,
+        pendingRestoreCount: Int,
+        generatedAt: Date,
+        timeZone: TimeZone = .current
+    ) -> DiagnosticsMailContent {
+        let stamp = DateFormatter()
+        stamp.calendar = Calendar(identifier: .gregorian)
+        stamp.locale = Locale(identifier: "en_US_POSIX")
+        stamp.timeZone = timeZone
+        stamp.dateFormat = "yyyy/MM/dd HH:mm"
+        let fileStamp = DateFormatter()
+        fileStamp.calendar = Calendar(identifier: .gregorian)
+        fileStamp.locale = Locale(identifier: "en_US_POSIX")
+        fileStamp.timeZone = timeZone
+        fileStamp.dateFormat = "yyyyMMdd-HHmm"
+
+        let fileName = "codematch-bluetooth-diagnostics-\(fileStamp.string(from: generatedAt)).txt"
+        let subject = AppLocalization.string("CodeMatch 診断ログ")
+            + " \(appVersion) \(device) \(stamp.string(from: generatedAt))"
+        let lines = [
+            AppLocalization.string("CodeMatch の Bluetooth 診断ログをお送りします。"),
+            "",
+            AppLocalization.string("アプリ: \(appVersion)"),
+            AppLocalization.string("端末: \(device)"),
+            AppLocalization.string("接続: \(connectionStatus)"),
+            AppLocalization.string("記録: \(eventCount)件"),
+            AppLocalization.string("復元待ちのスキャナ: \(pendingRestoreCount)台"),
+            "",
+            AppLocalization.string("■ 添付"),
+            fileName,
+            "",
+            AppLocalization.string("読み取ったコードの内容は含まれていません。"),
+        ]
+        return DiagnosticsMailContent(
+            subject: subject,
+            body: lines.joined(separator: "\n"),
+            fileName: fileName
+        )
+    }
+}

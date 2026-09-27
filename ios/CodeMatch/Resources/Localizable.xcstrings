@@ -5145,22 +5145,6 @@
         }
       }
     },
-    "診断ログを共有" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Share diagnostic log"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "診断ログを共有"
-          }
-        }
-      }
-    },
     "診断ログを消去" : {
       "localizations" : {
         "en" : {
@@ -5173,22 +5157,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "診断ログを消去"
-          }
-        }
-      }
-    },
-    "CodeMatch Bluetooth診断ログ" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "CodeMatch Bluetooth diagnostic log"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "CodeMatch Bluetooth診断ログ"
           }
         }
       }
@@ -6373,6 +6341,134 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "照合履歴レポートをお送りします。"
+          }
+        }
+      }
+    },
+    "診断ログを管理者へ送る" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send diagnostic log to support"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "診断ログを管理者へ送る"
+          }
+        }
+      }
+    },
+    "CodeMatch 診断ログ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CodeMatch diagnostic log"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CodeMatch 診断ログ"
+          }
+        }
+      }
+    },
+    "CodeMatch の Bluetooth 診断ログをお送りします。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Here is the CodeMatch Bluetooth diagnostic log."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CodeMatch の Bluetooth 診断ログをお送りします。"
+          }
+        }
+      }
+    },
+    "アプリ: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アプリ: %@"
+          }
+        }
+      }
+    },
+    "端末: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Device: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "端末: %@"
+          }
+        }
+      }
+    },
+    "接続: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connection: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接続: %@"
+          }
+        }
+      }
+    },
+    "復元待ちのスキャナ: %lld台" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scanners awaiting restore: %lld"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "復元待ちのスキャナ: %lld台"
+          }
+        }
+      }
+    },
+    "読み取ったコードの内容は含まれていません。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The contents of scanned codes are not included."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "読み取ったコードの内容は含まれていません。"
           }
         }
       }

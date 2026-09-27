@@ -69,6 +69,22 @@ struct SettingsScreen: View {
         let url: URL
     }
 
+    /// 診断ログを管理者へ送るメール作成画面（#143）。
+    private struct DiagnosticsMailItem: Identifiable {
+        let id = UUID()
+        let content: DiagnosticsMailContent
+        let logText: String
+    }
+
+    /// 「メール」にアカウントがない端末で使う、従来どおりの共有シート。
+    private struct DiagnosticsShareItem: Identifiable {
+        let id = UUID()
+        let text: String
+    }
+
+    @State private var diagnosticsMailItem: DiagnosticsMailItem?
+    @State private var diagnosticsShareItem: DiagnosticsShareItem?
+
     var body: some View {
         ZStack {
             AppTheme.paper.ignoresSafeArea()
@@ -149,6 +165,25 @@ struct SettingsScreen: View {
                 showsScannerSetupGuide = false
                 bluetoothScanner.startDiscovery()
             }
+        }
+        .sheet(item: $diagnosticsMailItem) { item in
+            MailComposeView(
+                recipients: DiagnosticsMailContent.recipients,
+                subject: item.content.subject,
+                body: item.content.body,
+                attachment: MailComposeView.Attachment(
+                    data: Data(item.logText.utf8),
+                    fileName: item.content.fileName,
+                    mimeType: "text/plain"
+                )
+            ) {
+                diagnosticsMailItem = nil
+            }
+            .ignoresSafeArea()
+        }
+        .sheet(item: $diagnosticsShareItem) { item in
+            ActivityShareSheet(items: [item.text])
+                .presentationDetents([.medium, .large])
         }
         .sheet(item: $scanLogShareItem) { item in
             ActivityShareSheet(items: [item.url])
@@ -235,6 +270,21 @@ struct SettingsScreen: View {
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .scannerCard()
+    }
+
+    /// 宛先・件名・本文・ログ添付を埋めたメール作成画面を開き、操作者は送信を押すだけにする。
+    /// 「メール」にアカウントがない端末では従来どおりの共有シートに切り替える（#143）。
+    private func sendDiagnostics() {
+        let logText = bluetoothScanner.diagnosticLogText()
+        guard MailComposeView.canSendMail else {
+            diagnosticsShareItem = DiagnosticsShareItem(text: logText)
+            return
+        }
+        let device = "\(UIDevice.current.model) / iOS \(UIDevice.current.systemVersion)"
+        diagnosticsMailItem = DiagnosticsMailItem(
+            content: bluetoothScanner.diagnosticsMailContent(device: device),
+            logText: logText
+        )
     }
 
     /// ヘッダ行つきのJSONLを一時ファイルへ書き出して共有シートに渡す。
@@ -404,6 +454,22 @@ struct SettingsScreen: View {
             .accessibilityIdentifier("bluetoothScannerConnectionHelp")
 
             if !bluetoothScanner.diagnosticEvents.isEmpty {
+                // 一覧を開かなくても押せるよう、送信ボタンは折りたたみの外に置く（#143）。
+                Button {
+                    sendDiagnostics()
+                } label: {
+                    Label(
+                        AppLocalization.string("診断ログを管理者へ送る"),
+                        systemImage: "envelope"
+                    )
+                    .font(.subheadline.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                }
+                .buttonStyle(.bordered)
+                .tint(AppTheme.green)
+                .accessibilityIdentifier("shareBluetoothDiagnosticsButton")
+
                 DisclosureGroup("接続診断（直近20件）") {
                     VStack(alignment: .leading, spacing: 7) {
                         ForEach(
@@ -425,22 +491,6 @@ struct SettingsScreen: View {
                     .accessibilityIdentifier("bluetoothDiagnosticEvents")
 
                     HStack(spacing: 10) {
-                        ShareLink(
-                            item: bluetoothScanner.diagnosticLogText(),
-                            preview: SharePreview(AppLocalization.string("CodeMatch Bluetooth診断ログ"))
-                        ) {
-                            Label(
-                                AppLocalization.string("診断ログを共有"),
-                                systemImage: "square.and.arrow.up"
-                            )
-                            .font(.caption.weight(.bold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 9)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(AppTheme.green)
-                        .accessibilityIdentifier("shareBluetoothDiagnosticsButton")
-
                         Button(role: .destructive) {
                             bluetoothScanner.clearDiagnosticEvents()
                         } label: {
