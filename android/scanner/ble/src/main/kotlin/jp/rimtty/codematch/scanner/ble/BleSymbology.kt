@@ -259,7 +259,7 @@ object SymbologySettings {
 
 /** In-memory persistence useful for tests and as a default adapter boundary. */
 sealed interface SymbologySnapshotReadResult {
-    /** No snapshot has been saved for this store. */
+    /** No snapshot has been saved for this device. */
     data object Missing : SymbologySnapshotReadResult
 
     /** A snapshot passed all persistence and identity checks. */
@@ -280,34 +280,32 @@ sealed interface SymbologySnapshotClearResult {
     data class Rejected(val reason: String) : SymbologySnapshotClearResult
 }
 
+/**
+ * Pre-session recovery inventories keyed by scanner (device id).
+ *
+ * Every device's snapshot is saved, read, and cleared independently: a restore
+ * still pending for one scanner neither blocks nor is ever applied to another
+ * scanner, and is restored when that scanner reconnects (#135).
+ */
 interface SymbologySnapshotStore {
     val profileIdentity: String
 
     fun load(deviceId: String): SymbologySnapshot?
 
     /**
-     * Returns the last saved snapshot when the implementation can store more
-     * than one device. The default keeps simple one-device adapters source
-     * compatible; callers use it to reject a snapshot belonging to another
-     * scanner rather than applying it blindly.
-     */
-    fun loadLatest(): SymbologySnapshot? = null
-
-    /**
-     * Identity-aware read used by lifecycle code. Legacy stores retain their
-     * nullable [load] API while Android persistence adapters can distinguish a
-     * missing value from a corrupt, incompatible, or mismatched value.
+     * Identity-aware read of [deviceId]'s own snapshot, used by lifecycle code.
+     * Legacy stores retain their nullable [load] API while Android persistence
+     * adapters can distinguish a missing value from a corrupt, incompatible, or
+     * mismatched value.
      */
     fun read(deviceId: String): SymbologySnapshotReadResult =
         load(deviceId)?.let(SymbologySnapshotReadResult::Found)
             ?: SymbologySnapshotReadResult.Missing
 
-    /** Identity-aware form of [loadLatest] for persistence adapters. */
-    fun readLatest(): SymbologySnapshotReadResult =
-        loadLatest()?.let(SymbologySnapshotReadResult::Found)
-            ?: SymbologySnapshotReadResult.Missing
-
+    /** Replace the snapshot of [SymbologySnapshot.deviceId] only. */
     fun save(snapshot: SymbologySnapshot)
+
+    /** Remove [deviceId]'s snapshot only; other devices' snapshots are kept. */
     fun clear(deviceId: String): SymbologySnapshotClearResult
 }
 
@@ -317,10 +315,6 @@ class InMemorySymbologySnapshotStore(
     private val snapshots = mutableMapOf<String, SymbologySnapshot>()
 
     override fun load(deviceId: String): SymbologySnapshot? = snapshots[deviceId]
-
-    override fun loadLatest(): SymbologySnapshot? = snapshots.values.maxByOrNull {
-        it.capturedAtMillis
-    }
 
     override fun save(snapshot: SymbologySnapshot) {
         snapshots[snapshot.deviceId] = snapshot

@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 
 /**
- * Preferences DataStore name used for the one recovery snapshot.
+ * Preferences DataStore name used for the per-scanner recovery snapshots.
  *
  * The resulting private file is
  * `files/datastore/codematch-ble-symbology.preferences_pb`. Keep this name in
@@ -24,7 +24,14 @@ const val BLE_SYMBOLOGY_DATASTORE_NAME = "codematch-ble-symbology"
 const val BLE_SYMBOLOGY_DATASTORE_FILE_NAME =
     "$BLE_SYMBOLOGY_DATASTORE_NAME.preferences_pb"
 
-private const val SNAPSHOT_PREFERENCE_NAME = "completeSnapshot"
+/**
+ * Single-slot key written by builds before #135. It is still read, but only as
+ * the record of the device named inside the value; new writes never use it.
+ */
+private const val LEGACY_SNAPSHOT_PREFERENCE_NAME = "completeSnapshot"
+
+/** One record per scanner: this prefix followed by the device id (its MAC). */
+private const val DEVICE_SNAPSHOT_PREFERENCE_PREFIX = "completeSnapshot:"
 
 /** Process-wide app-private DataStore used by [BleSymbologySnapshotStore]. */
 val Context.codeMatchBleSymbologyDataStore: DataStore<Preferences> by
@@ -91,9 +98,8 @@ class BleSymbologySnapshotSerializer {
     /**
      * Decode and validate one stored value.
      *
-     * A null expected identity means that the caller is asking for the latest
-     * value without selecting a device yet. The DataStore adapter still always
-     * checks the profile identity before returning it.
+     * A null expected identity skips that check. The DataStore adapter always
+     * passes both the device and the profile identity before returning a value.
      */
     fun decodeResult(
         serialized: String,
@@ -166,6 +172,18 @@ class BleSymbologySnapshotSerializer {
         is BleSymbologySnapshotDecodeResult.Rejected -> null
     }
 
+    /**
+     * The device a stored value names, read leniently so that a value whose
+     * other fields are corrupt or of another version or profile can still be
+     * attributed to its scanner. Null when no device id can be read at all.
+     */
+    fun ownerDeviceId(serialized: String): String? {
+        val root = runCatching {
+            com.google.gson.JsonParser.parseString(serialized).asJsonObject
+        }.getOrNull() ?: return null
+        return root.stringValue("deviceId")?.takeIf(String::isNotBlank)
+    }
+
     private fun parseItem(element: com.google.gson.JsonElement): ScannerSettingItem? {
         if (!element.isJsonObject) return null
         val jsonObject = element.asJsonObject
@@ -225,7 +243,17 @@ class BleSymbologySnapshotSerializer {
 }
 
 /**
- * App-private atomic persistence for the recovery inventory.
+ * App-private atomic persistence for the recovery inventories, one per scanner.
+ *
+ * Each physical scanner (its [SymbologySnapshot.deviceId]) owns an independent
+ * record, so a restore still pending for one scanner never blocks or is
+ * applied to another scanner, and saving or clearing one scanner's record
+ * leaves every other record untouched. A value written by earlier builds under
+ * the single legacy key is honoured as the record of the device it names: it
+ * is found and cleared only through that device, is superseded when that
+ * device saves a fresh baseline, and is invisible to every other device. A
+ * legacy value that does not name a device cannot be attributed and is left
+ * in place without blocking anyone.
  *
  * The public store contract remains synchronous because [BleSymbologySession]
  * is a synchronous protocol state machine. DataStore's atomic [edit] is
@@ -238,7 +266,7 @@ class BleSymbologySnapshotStore(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val serializer: BleSymbologySnapshotSerializer = BleSymbologySnapshotSerializer(),
 ) : SymbologySnapshotStore {
-    private val snapshotKey = stringPreferencesKey(SNAPSHOT_PREFERENCE_NAME)
+    private val legacySnapshotKey = stringPreferencesKey(LEGACY_SNAPSHOT_PREFERENCE_NAME)
 
     init {
         require(profileIdentity.isNotBlank()) { "profileIdentity must not be blank" }
@@ -259,21 +287,55 @@ class BleSymbologySnapshotStore(
     override fun load(deviceId: String): SymbologySnapshot? =
         (read(deviceId) as? SymbologySnapshotReadResult.Found)?.snapshot
 
-    override fun loadLatest(): SymbologySnapshot? =
-        (readLatest() as? SymbologySnapshotReadResult.Found)?.snapshot
+    /** Read only [deviceId]'s own record; another scanner's record is never consulted. */
+    override fun read(deviceId: String): SymbologySnapshotReadResult {
+        if (deviceId.isBlank()) {
+            return SymbologySnapshotReadResult.Rejected(
+                BleSymbologySnapshotRejectionReason.CORRUPT,
+            )
+        }
 
-    override fun read(deviceId: String): SymbologySnapshotReadResult =
-        readStored(expectedDeviceId = deviceId)
+        val preferences = try {
+            runBlocking(ioDispatcher) { dataStore.data.first() }
+        } catch (_: IOException) {
+            return SymbologySnapshotReadResult.Rejected(
+                BleSymbologySnapshotRejectionReason.DATASTORE_READ_FAILED,
+            )
+        } catch (_: Exception) {
+            return SymbologySnapshotReadResult.Rejected(
+                BleSymbologySnapshotRejectionReason.DATASTORE_READ_FAILED,
+            )
+        }
 
-    override fun readLatest(): SymbologySnapshotReadResult =
-        readStored(expectedDeviceId = null)
+        val serialized = recordFor(preferences, deviceId)
+            ?: return SymbologySnapshotReadResult.Missing
+        return when (
+            val decoded = serializer.decodeResult(
+                serialized = serialized,
+                expectedDeviceId = deviceId,
+                expectedProfileIdentity = profileIdentity,
+            )
+        ) {
+            is BleSymbologySnapshotDecodeResult.Accepted ->
+                SymbologySnapshotReadResult.Found(decoded.snapshot)
 
+            is BleSymbologySnapshotDecodeResult.Rejected ->
+                SymbologySnapshotReadResult.Rejected(decoded.reason)
+        }
+    }
+
+    /** Replace [snapshot]'s device record; other scanners' records are kept. */
     override fun save(snapshot: SymbologySnapshot) {
         val encoded = serializer.encode(snapshot, profileIdentity)
         try {
             runBlocking(ioDispatcher) {
                 dataStore.edit { preferences ->
-                    preferences[snapshotKey] = encoded
+                    preferences[deviceSnapshotKey(snapshot.deviceId)] = encoded
+                    // The fresh baseline supersedes this device's legacy value,
+                    // exactly as the old single-slot save overwrote it.
+                    if (legacyOwner(preferences) == snapshot.deviceId) {
+                        preferences.remove(legacySnapshotKey)
+                    }
                 }
             }
         } catch (error: Exception) {
@@ -284,33 +346,32 @@ class BleSymbologySnapshotStore(
         }
     }
 
-    /** Clear only a valid snapshot belonging to the requested device. */
+    /** Clear only [deviceId]'s own valid record; other scanners' records are kept. */
     override fun clear(deviceId: String): SymbologySnapshotClearResult {
         if (deviceId.isBlank()) {
             return SymbologySnapshotClearResult.Rejected(
                 BleSymbologySnapshotRejectionReason.CORRUPT,
             )
         }
+        val deviceKey = deviceSnapshotKey(deviceId)
         return try {
             runBlocking(ioDispatcher) {
                 var result: SymbologySnapshotClearResult = SymbologySnapshotClearResult.Missing
                 val updated = dataStore.edit { preferences ->
-                    val serialized = preferences[snapshotKey] ?: return@edit
+                    val serialized = recordFor(preferences, deviceId) ?: return@edit
                     when (
                         val decoded = serializer.decodeResult(
                             serialized = serialized,
+                            expectedDeviceId = deviceId,
                             expectedProfileIdentity = profileIdentity,
                         )
                     ) {
                         is BleSymbologySnapshotDecodeResult.Accepted -> {
-                            if (decoded.snapshot.deviceId == deviceId) {
-                                preferences.remove(snapshotKey)
-                                result = SymbologySnapshotClearResult.Cleared
-                            } else {
-                                result = SymbologySnapshotClearResult.Rejected(
-                                    BleSymbologySnapshotRejectionReason.DEVICE_MISMATCH,
-                                )
+                            preferences.remove(deviceKey)
+                            if (legacyOwner(preferences) == deviceId) {
+                                preferences.remove(legacySnapshotKey)
                             }
+                            result = SymbologySnapshotClearResult.Cleared
                         }
                         is BleSymbologySnapshotDecodeResult.Rejected -> {
                             result = SymbologySnapshotClearResult.Rejected(decoded.reason)
@@ -318,7 +379,7 @@ class BleSymbologySnapshotStore(
                     }
                 }
                 if (result == SymbologySnapshotClearResult.Cleared &&
-                    updated[snapshotKey] != null
+                    recordFor(updated, deviceId) != null
                 ) {
                     SymbologySnapshotClearResult.Rejected(
                         "Saved scanner settings could not be cleared",
@@ -334,42 +395,21 @@ class BleSymbologySnapshotStore(
         }
     }
 
-    private fun readStored(expectedDeviceId: String?): SymbologySnapshotReadResult {
-        if (expectedDeviceId?.isBlank() == true) {
-            return SymbologySnapshotReadResult.Rejected(
-                BleSymbologySnapshotRejectionReason.CORRUPT,
-            )
-        }
-
-        val serialized = try {
-            runBlocking(ioDispatcher) {
-                dataStore.data.first()[snapshotKey]
+    /**
+     * The record owned by [deviceId]: its own key first, then a legacy
+     * single-slot value that names this device. Never another device's.
+     */
+    private fun recordFor(preferences: Preferences, deviceId: String): String? =
+        preferences[deviceSnapshotKey(deviceId)]
+            ?: preferences[legacySnapshotKey]?.takeIf {
+                serializer.ownerDeviceId(it) == deviceId
             }
-        } catch (_: IOException) {
-            return SymbologySnapshotReadResult.Rejected(
-                BleSymbologySnapshotRejectionReason.DATASTORE_READ_FAILED,
-            )
-        } catch (_: Exception) {
-            return SymbologySnapshotReadResult.Rejected(
-                BleSymbologySnapshotRejectionReason.DATASTORE_READ_FAILED,
-            )
-        }
 
-        serialized ?: return SymbologySnapshotReadResult.Missing
-        return when (
-            val decoded = serializer.decodeResult(
-                serialized = serialized,
-                expectedDeviceId = expectedDeviceId,
-                expectedProfileIdentity = profileIdentity,
-            )
-        ) {
-            is BleSymbologySnapshotDecodeResult.Accepted ->
-                SymbologySnapshotReadResult.Found(decoded.snapshot)
+    private fun legacyOwner(preferences: Preferences): String? =
+        preferences[legacySnapshotKey]?.let(serializer::ownerDeviceId)
 
-            is BleSymbologySnapshotDecodeResult.Rejected ->
-                SymbologySnapshotReadResult.Rejected(decoded.reason)
-        }
-    }
+    private fun deviceSnapshotKey(deviceId: String): Preferences.Key<String> =
+        stringPreferencesKey(DEVICE_SNAPSHOT_PREFERENCE_PREFIX + deviceId)
 }
 
 class BleSymbologySnapshotStoreException(

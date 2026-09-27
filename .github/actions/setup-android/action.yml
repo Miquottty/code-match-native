@@ -17,6 +17,9 @@ runs:
       uses: android-actions/setup-android@v3
       with:
         cmdline-tools-version: 15859902
+        # v3 defaults to "tools platform-tools"; the obsolete "tools" package is
+        # no longer available and makes sdkmanager exit 1 on current runners.
+        packages: platform-tools
 
     - name: Select current Android SDK CLI
       shell: bash

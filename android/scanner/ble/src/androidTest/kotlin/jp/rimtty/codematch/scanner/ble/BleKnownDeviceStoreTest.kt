@@ -177,7 +177,7 @@ class BleKnownDeviceStoreTest {
             secondTransport.completeWrite(Result.success(Unit))
             assertEquals(BleSymbologySessionState.Ready, secondSession.state)
             assertEquals(ConfigurationState.Ready, secondSession.configurationState)
-            assertEquals(SymbologySnapshotReadResult.Missing, secondSnapshotStore.readLatest())
+            assertEquals(SymbologySnapshotReadResult.Missing, secondSnapshotStore.read(device.id))
             assertEquals(BleKnownDeviceReadResult.Found(device), secondKnownStore.read())
             assertFalse(secondBridge.state.isReadyForScanning)
             secondBridge.close()

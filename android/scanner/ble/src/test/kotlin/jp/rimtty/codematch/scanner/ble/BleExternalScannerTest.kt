@@ -514,6 +514,128 @@ class BleExternalScannerTest {
     }
 
     @Test
+    fun selectableFacadeSwitchesScannerAfterTheSessionScannerDropsMidSession() {
+        // #135: the dropped scanner's unrestored session used to block every
+        // other scanner for the rest of the process (connect() returned false).
+        val transport = RecordingTransport()
+        val stack = createSelectableStack(transport)
+        val other = ScannerDevice("scanner-other", "other scanner")
+
+        assertTrue(stack.scanner.connect(device))
+        transport.emit(BleTransportEvent.Connected(device))
+        transport.completeRead(originalSettings())
+        assertTrue(stack.scanner.setExpectedFormat(ScanFormat.QR))
+        transport.completeWrite(0, Result.success(Unit))
+        assertTrue(stack.scanner.isReadyForScanning)
+        val pendingA = stack.snapshotStore.load(device.id)
+        assertNotNull(pendingA)
+
+        // Power off / battery: the link is lost while the session is active.
+        transport.emit(BleTransportEvent.Disconnected(device, unexpected = true))
+        assertTrue(stack.createdSessions.single().isSessionActive)
+        assertTrue(stack.scanner.connect(other))
+        assertEquals(other, stack.scanner.boundDevice)
+        assertEquals(listOf(device, other), transport.connectCalls)
+        assertEquals(pendingA, stack.snapshotStore.load(device.id))
+
+        // The new scanner configures, and the scan flow can start on it with
+        // its own snapshot while A's stays pending.
+        transport.emit(BleTransportEvent.Connected(other))
+        transport.completeRead(originalSettings())
+        assertEquals(ConfigurationState.Ready, stack.scanner.configurationState)
+        assertTrue(transport.writes.size == 1)
+        assertTrue(stack.scanner.setExpectedFormat(ScanFormat.QR))
+        transport.completeWrite(1, Result.success(Unit))
+        assertTrue(stack.scanner.isReadyForScanning)
+        assertEquals(other.id, stack.snapshotStore.load(other.id)?.deviceId)
+        assertEquals(pendingA, stack.snapshotStore.load(device.id))
+
+        // Ending on B restores and clears B only.
+        assertTrue(stack.scanner.disconnect())
+        transport.completeWrite(2, Result.success(Unit))
+        assertNull(stack.snapshotStore.load(other.id))
+        assertEquals(pendingA, stack.snapshotStore.load(device.id))
+        transport.emit(BleTransportEvent.Disconnected(other, unexpected = false))
+
+        // A comes back and gets its baseline restored before Ready.
+        assertTrue(stack.scanner.connect(device))
+        assertEquals(device, stack.scanner.boundDevice)
+        transport.emit(BleTransportEvent.Connected(device))
+        transport.completeRead(restrictedSettings())
+        assertEquals(BleSymbologySessionState.Restoring, stack.createdSessions.last().state)
+        assertEquals(4, transport.writes.size)
+        transport.completeWrite(3, Result.success(Unit))
+        assertEquals(ConfigurationState.Ready, stack.scanner.configurationState)
+        assertNull(stack.snapshotStore.load(device.id))
+        assertEquals(
+            listOf(device, other, device),
+            stack.createdSessions.map { it.scannerDevice },
+        )
+    }
+
+    @Test
+    fun selectableFacadeStillRefusesAnotherScannerWhileTheDroppedOneReconnects() {
+        var now = 1_000L
+        val transport = RecordingTransport()
+        val stack = createSelectableStack(
+            transport,
+            nowMillis = { now },
+            reconnectDelayMillis = { 1_000L },
+        )
+        val other = ScannerDevice("scanner-other", "other scanner")
+
+        assertTrue(stack.scanner.connect(device))
+        // A pending connect (Connecting + pending link) cannot be redirected.
+        assertFalse(stack.scanner.connect(other))
+        transport.emit(BleTransportEvent.Connected(device))
+        transport.completeRead(originalSettings())
+        assertTrue(stack.scanner.setExpectedFormat(ScanFormat.QR))
+        transport.completeWrite(0, Result.success(Unit))
+
+        transport.emit(BleTransportEvent.Disconnected(device, unexpected = true))
+        now += 1_000L
+        stack.scanner.tick(now)
+        assertEquals(ConnectionState.Connecting(device), stack.scanner.connectionState)
+        assertFalse(stack.scanner.connect(other))
+        assertEquals(device, stack.scanner.boundDevice)
+        assertEquals(listOf(device, device), transport.connectCalls)
+
+        // Once the reconnect attempt fails there is no link or attempt left.
+        transport.emit(BleTransportEvent.ConnectionFailed(device, "unreachable"))
+        assertTrue(stack.scanner.connect(other))
+        assertEquals(other, stack.scanner.boundDevice)
+    }
+
+    @Test
+    fun selectableFacadeWaitsForAnUnsettledRestoreOfTheDroppedScanner() {
+        val transport = RecordingTransport()
+        val stack = createSelectableStack(transport)
+        val other = ScannerDevice("scanner-other", "other scanner")
+        assertTrue(stack.scanner.connect(device))
+        transport.emit(BleTransportEvent.Connected(device))
+        transport.completeRead(originalSettings())
+        assertTrue(stack.scanner.setExpectedFormat(ScanFormat.QR))
+        transport.completeWrite(0, Result.success(Unit))
+        transport.emit(BleTransportEvent.Disconnected(device, unexpected = true))
+
+        // The scan flow falls back to camera and asks for the baseline. This
+        // transport accepts the write although there is no link, so the old
+        // owner still has a command on the shared transport.
+        stack.scanner.setExpectedFormat(null)
+        assertEquals(2, transport.writes.size)
+        assertFalse(stack.scanner.connect(other))
+        assertEquals(device, stack.scanner.boundDevice)
+
+        // Once that write settles (it cannot reach a scanner without a link),
+        // the other scanner is accepted and A's snapshot stays pending.
+        transport.completeWrite(1, Result.failure(IllegalStateException("no link")))
+        assertNotNull(stack.snapshotStore.load(device.id))
+        assertTrue(stack.scanner.connect(other))
+        assertEquals(other, stack.scanner.boundDevice)
+        assertNotNull(stack.snapshotStore.load(device.id))
+    }
+
+    @Test
     fun unavailablePendingLinkCannotRebindTheSessionToAnotherDevice() {
         val transport = RecordingTransport()
         val stack = createSelectableStack(transport)
@@ -600,10 +722,14 @@ class BleExternalScannerTest {
     private fun createSelectableStack(
         transport: RecordingTransport,
         knownStore: KnownDeviceStore = InMemoryKnownDeviceStore(profileIdentity),
+        nowMillis: () -> Long = { System.currentTimeMillis() },
+        reconnectDelayMillis: (Int) -> Long = { 8_000L },
     ): SelectableStack {
         val connection = BleConnectionCoordinator(
             transport = transport,
             knownDeviceStore = knownStore,
+            nowMillis = nowMillis,
+            reconnectDelayMillis = reconnectDelayMillis,
         )
         val snapshotStore = InMemorySymbologySnapshotStore(profileIdentity)
         val createdSessions = mutableListOf<BleSymbologySession>()
@@ -624,12 +750,13 @@ class BleExternalScannerTest {
                 BleScannerSessionCoordinator(connection, session)
             },
         )
-        return SelectableStack(scanner, createdSessions)
+        return SelectableStack(scanner, createdSessions, snapshotStore)
     }
 
     private data class SelectableStack(
         val scanner: SelectableBleExternalScanner,
         val createdSessions: List<BleSymbologySession>,
+        val snapshotStore: InMemorySymbologySnapshotStore,
     )
 
     private class RecordingTransport : BleTransport {
