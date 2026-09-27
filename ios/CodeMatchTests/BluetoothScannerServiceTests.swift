@@ -303,7 +303,7 @@ final class BluetoothScannerServiceTests: XCTestCase {
 
         XCTAssertEqual(firstLaunch.persistedSymbologyMode, .sessionCodes)
         XCTAssertEqual(
-            firstLaunch.persistedSymbologySnapshot?.values,
+            firstLaunch.persistedSymbologySnapshot(for: "SIMULATOR-BCST-47")?.values,
             [
                 "code39_on": 1,
                 "code128_on": 1,
@@ -322,7 +322,7 @@ final class BluetoothScannerServiceTests: XCTestCase {
         XCTAssertTrue(relaunched.isReadyForScanning)
         XCTAssertNil(relaunched.expectedCode)
         XCTAssertEqual(relaunched.persistedSymbologyMode, .unrestricted)
-        XCTAssertNil(relaunched.persistedSymbologySnapshot)
+        XCTAssertTrue(relaunched.persistedSymbologySnapshots.isEmpty)
     }
 
     func testRelaunchRecoversLegacyCode128OnlyStateFromStuckBuild() throws {
@@ -348,7 +348,7 @@ final class BluetoothScannerServiceTests: XCTestCase {
         )
         defaults.set(
             try JSONEncoder().encode(snapshot),
-            forKey: BluetoothScannerService.symbologySnapshotKey
+            forKey: BluetoothScannerSymbologySnapshotStore.legacySnapshotKey
         )
 
         let relaunched = BluetoothScannerService(defaults: defaults)
@@ -359,7 +359,8 @@ final class BluetoothScannerServiceTests: XCTestCase {
         XCTAssertTrue(relaunched.isReadyForScanning)
         XCTAssertNil(relaunched.expectedCode)
         XCTAssertEqual(relaunched.persistedSymbologyMode, .unrestricted)
-        XCTAssertNil(relaunched.persistedSymbologySnapshot)
+        XCTAssertTrue(relaunched.persistedSymbologySnapshots.isEmpty)
+        XCTAssertNil(defaults.data(forKey: BluetoothScannerSymbologySnapshotStore.legacySnapshotKey))
     }
 
     func testManualDisconnectRestoresSafeBaseline() {
@@ -378,7 +379,122 @@ final class BluetoothScannerServiceTests: XCTestCase {
         XCTAssertFalse(service.isReadyForScanning)
         XCTAssertNil(service.expectedCode)
         XCTAssertEqual(service.persistedSymbologyMode, .unrestricted)
-        XCTAssertNil(service.persistedSymbologySnapshot)
+        XCTAssertTrue(service.persistedSymbologySnapshots.isEmpty)
+    }
+
+    func testSnapshotStoreKeepsEachScannerSeparately() {
+        let defaults = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = BluetoothScannerSymbologySnapshotStore(defaults: defaults)
+        let first = BluetoothScannerSymbologySnapshot(deviceID: "SCANNER-A", values: ["qrcode_on": 1])
+        let second = BluetoothScannerSymbologySnapshot(deviceID: "SCANNER-B", values: ["code128_on": 0])
+
+        store.save(first)
+        store.save(second)
+        XCTAssertEqual(store.snapshot(for: "SCANNER-A"), first)
+        XCTAssertEqual(store.snapshot(for: "SCANNER-B"), second)
+
+        store.remove(deviceID: "SCANNER-A")
+        XCTAssertNil(store.snapshot(for: "SCANNER-A"))
+        XCTAssertEqual(store.snapshot(for: "SCANNER-B"), second)
+
+        store.remove(deviceID: "SCANNER-B")
+        XCTAssertTrue(store.all.isEmpty)
+        XCTAssertNil(defaults.data(forKey: BluetoothScannerSymbologySnapshotStore.snapshotsKey))
+    }
+
+    func testSnapshotStoreCarriesOverTheLegacySingleSlotForItsOwnScanner() throws {
+        let defaults = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let legacy = BluetoothScannerSymbologySnapshot(deviceID: "SCANNER-A", values: ["qrcode_on": 1])
+        defaults.set(
+            try JSONEncoder().encode(legacy),
+            forKey: BluetoothScannerSymbologySnapshotStore.legacySnapshotKey
+        )
+        let store = BluetoothScannerSymbologySnapshotStore(defaults: defaults)
+
+        XCTAssertEqual(store.snapshot(for: "SCANNER-A"), legacy)
+        XCTAssertNil(store.snapshot(for: "SCANNER-B"))
+
+        let other = BluetoothScannerSymbologySnapshot(deviceID: "SCANNER-B", values: ["qrcode_on": 0])
+        store.save(other)
+        XCTAssertNil(defaults.data(forKey: BluetoothScannerSymbologySnapshotStore.legacySnapshotKey))
+        XCTAssertEqual(store.snapshot(for: "SCANNER-A"), legacy)
+        XCTAssertEqual(store.snapshot(for: "SCANNER-B"), other)
+    }
+
+    /// 照合中に離れた別のスキャナーの復元待ちがあっても、今つないだスキャナーは
+    /// 照合に使え、別のスキャナーの分は次回接続での復元用に残る（#135）。
+    func testAnotherScannersPendingRestoreDoesNotBlockTheConnectedScanner() throws {
+        let defaults = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let otherScanner = BluetoothScannerSymbologySnapshot(
+            deviceID: "OTHER-SCANNER",
+            values: ["qrcode_on": 1, "code128_on": 1, "ean_13_on": 1]
+        )
+        defaults.set(
+            try JSONEncoder().encode(otherScanner),
+            forKey: BluetoothScannerSymbologySnapshotStore.legacySnapshotKey
+        )
+        defaults.set(
+            BluetoothScannerSymbologyMode.sessionCodes.rawValue,
+            forKey: BluetoothScannerService.symbologyRecoveryModeKey
+        )
+
+        let service = BluetoothScannerService(defaults: defaults)
+        service.startDiscovery()
+        service.connect(service.devices[0])
+        XCTAssertTrue(service.isReadyForScanning)
+
+        service.setExpectedCode(.qr)
+        XCTAssertTrue(service.isReadyForScanning)
+        XCTAssertEqual(service.persistedSymbologyMode, .sessionCodes)
+        XCTAssertNotNil(service.persistedSymbologySnapshot(for: "SIMULATOR-BCST-47"))
+        XCTAssertEqual(service.persistedSymbologySnapshot(for: "OTHER-SCANNER"), otherScanner)
+        XCTAssertTrue(service.diagnosticLogText().contains("pending restores: 2"))
+
+        service.disconnect()
+        XCTAssertNil(service.persistedSymbologySnapshot(for: "SIMULATOR-BCST-47"))
+        XCTAssertEqual(service.persistedSymbologySnapshot(for: "OTHER-SCANNER"), otherScanner)
+    }
+
+    func testGATTModeSuccessorIsTheScannerRenamedWithTheSameSuffix() {
+        let origin = BluetoothScannerDevice(id: "2B94A2A1", name: "Hyper 160B-4F5F-UNI")
+        let renamed = BluetoothScannerDevice(id: "4CD0F65B", name: "HPRT-4F5F")
+        let unrelated = BluetoothScannerDevice(id: "6680C70B", name: "HPRT-636E")
+        // 「Hyper 160B」の160Bは「-」区切りの一部ではないため、別のスキャナーと取り違えない。
+        let modelNumber = BluetoothScannerDevice(id: "11111111", name: "HPRT-160B")
+
+        XCTAssertEqual(
+            BluetoothScannerService.gattModeSuccessors(
+                of: origin,
+                among: [origin, unrelated, renamed, modelNumber, renamed]
+            ),
+            [renamed]
+        )
+        XCTAssertEqual(
+            BluetoothScannerService.gattModeSuccessors(
+                of: BluetoothScannerDevice(id: "2B94A2A1", name: "hyper 160b-4f5f-uni"),
+                among: [renamed]
+            ),
+            [renamed]
+        )
+    }
+
+    func testGATTModeSuccessorIsEmptyWhenTheIdentityDoesNotChange() {
+        let origin = BluetoothScannerDevice(id: "4CD0F65B", name: "HPRT-4F5F")
+        XCTAssertTrue(
+            BluetoothScannerService.gattModeSuccessors(
+                of: origin,
+                among: [origin, BluetoothScannerDevice(id: "6680C70B", name: "HPRT-636E")]
+            ).isEmpty
+        )
+        XCTAssertTrue(
+            BluetoothScannerService.gattModeSuccessors(
+                of: BluetoothScannerDevice(id: "A", name: "Inateck Scanner"),
+                among: [BluetoothScannerDevice(id: "B", name: "Inateck Scanner")]
+            ).isEmpty
+        )
     }
 
     func testManualDisconnectKeepsKnownDeviceAvailableForReconnectAfterSearch() {
