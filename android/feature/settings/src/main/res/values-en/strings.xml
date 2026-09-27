@@ -131,7 +131,7 @@
     <string name="settings_tuning_applied">Read tuning: applied (multi-code off, inverse off, red light 4 s)</string>
     <string name="settings_tuning_failed">Could not confirm the read tuning. Reconnect the scanner.</string>
     <string name="settings_diagnostics_note">Keeps the latest 300 events and shows the latest 20 here. Scan values are never included.</string>
-    <string name="settings_diagnostics_share">Share diagnostic log</string>
+    <string name="settings_diagnostics_share">Send diagnostic log to support</string>
     <string name="settings_diagnostics_save">Save diagnostic log</string>
     <string name="settings_diagnostics_subject">CodeMatch Bluetooth diagnostic log</string>
     <string name="settings_diagnostics_saved">Diagnostic log saved.</string>
