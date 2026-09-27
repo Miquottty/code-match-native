@@ -68,4 +68,39 @@ final class ReportMailContentTests: XCTestCase {
         XCTAssertTrue(mail.body.hasSuffix("■ 添付\n照合履歴レポート_モルテン_x.pdf"))
         XCTAssertFalse(mail.body.contains("セッション名"))
     }
+
+    func testDiagnosticsMailGoesToSupportWithAStampedTextAttachment() {
+        let original = UserDefaults.standard.string(forKey: AppLanguage.storageKey)
+        UserDefaults.standard.set(AppLanguage.japanese.rawValue, forKey: AppLanguage.storageKey)
+        defer {
+            if let original {
+                UserDefaults.standard.set(original, forKey: AppLanguage.storageKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: AppLanguage.storageKey)
+            }
+        }
+        let tokyo = TimeZone(identifier: "Asia/Tokyo")!
+        // 2026-09-27 22:30 JST
+        let generatedAt = Date(timeIntervalSince1970: 1_790_515_800)
+
+        let mail = DiagnosticsMailContent.make(
+            appVersion: "1.0 (12)",
+            device: "iPhone / iOS 26.6.2",
+            connectionStatus: "HPRT-4F5F 接続済み",
+            eventCount: 300,
+            pendingRestoreCount: 1,
+            generatedAt: generatedAt,
+            timeZone: tokyo
+        )
+
+        XCTAssertEqual(DiagnosticsMailContent.recipients, ["contact-codematch@googlegroups.com"])
+        XCTAssertNotEqual(DiagnosticsMailContent.recipients, ReportMailContent.recipients)
+        XCTAssertEqual(mail.subject, "CodeMatch 診断ログ 1.0 (12) iPhone / iOS 26.6.2 2026/09/27 22:30")
+        XCTAssertEqual(mail.fileName, "codematch-bluetooth-diagnostics-20260927-2230.txt")
+        XCTAssertTrue(mail.body.contains("アプリ: 1.0 (12)"))
+        XCTAssertTrue(mail.body.contains("接続: HPRT-4F5F 接続済み"))
+        XCTAssertTrue(mail.body.contains("記録: 300件"))
+        XCTAssertTrue(mail.body.contains("復元待ちのスキャナ: 1台"))
+        XCTAssertTrue(mail.body.contains("■ 添付\ncodematch-bluetooth-diagnostics-20260927-2230.txt"))
+    }
 }
