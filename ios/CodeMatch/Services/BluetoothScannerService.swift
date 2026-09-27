@@ -113,6 +113,61 @@ struct BluetoothScannerSymbologySnapshot: Codable, Equatable {
     let values: [String: Int]
 }
 
+/// 照合開始前の全バーコード設定（復元用スナップショット）をスキャナーごとに保存する。
+/// 1台分しか持たないと、照合中に離れたスキャナーが戻るまで別のスキャナーを
+/// 設定できなかった（#135）。他のスキャナーの分は、そのスキャナーの次回接続で復元する。
+struct BluetoothScannerSymbologySnapshotStore {
+    static let snapshotsKey = "bluetoothScanner.symbologySnapshots"
+    /// 1台分だけを保存していた旧形式。持ち主のスキャナーの分として読み、次の書込で移す。
+    static let legacySnapshotKey = "bluetoothScanner.symbologySnapshot"
+
+    let defaults: UserDefaults
+
+    var all: [String: BluetoothScannerSymbologySnapshot] {
+        var snapshots = defaults.data(forKey: Self.snapshotsKey).flatMap {
+            try? JSONDecoder().decode([String: BluetoothScannerSymbologySnapshot].self, from: $0)
+        } ?? [:]
+        if let data = defaults.data(forKey: Self.legacySnapshotKey),
+           let legacy = try? JSONDecoder().decode(BluetoothScannerSymbologySnapshot.self, from: data),
+           snapshots[legacy.deviceID] == nil {
+            snapshots[legacy.deviceID] = legacy
+        }
+        return snapshots
+    }
+
+    func snapshot(for deviceID: String) -> BluetoothScannerSymbologySnapshot? {
+        all[deviceID]
+    }
+
+    func save(_ snapshot: BluetoothScannerSymbologySnapshot) {
+        var snapshots = all
+        snapshots[snapshot.deviceID] = snapshot
+        write(snapshots)
+    }
+
+    func remove(deviceID: String) {
+        var snapshots = all
+        guard snapshots.removeValue(forKey: deviceID) != nil else { return }
+        write(snapshots)
+    }
+
+    func removeAll() {
+        defaults.removeObject(forKey: Self.snapshotsKey)
+        defaults.removeObject(forKey: Self.legacySnapshotKey)
+    }
+
+    private func write(_ snapshots: [String: BluetoothScannerSymbologySnapshot]) {
+        if snapshots.isEmpty {
+            defaults.removeObject(forKey: Self.snapshotsKey)
+        } else if let data = try? JSONEncoder().encode(snapshots) {
+            defaults.set(data, forKey: Self.snapshotsKey)
+        } else {
+            return
+        }
+        defaults.removeObject(forKey: Self.legacySnapshotKey)
+    }
+}
+
 struct BluetoothScannerDiagnosticEvent: Identifiable, Equatable, Codable {
     let id = UUID()
     let date: Date
@@ -125,7 +180,6 @@ struct BluetoothScannerDiagnosticEvent: Identifiable, Equatable, Codable {
 final class BluetoothScannerService: NSObject, ObservableObject {
     static let preferredDeviceIDKey = "bluetoothScanner.preferredDeviceID"
     static let symbologyRecoveryModeKey = "bluetoothScanner.symbologyRecoveryMode"
-    static let symbologySnapshotKey = "bluetoothScanner.symbologySnapshot"
     static let diagnosticEventsKey = "bluetoothScanner.diagnosticEvents"
     static let cachedScannerSettingsKey = "bluetoothScanner.cachedScannerSettings"
     static let lastKnownDeviceIDKey = "bluetoothScanner.lastKnownDeviceID"
@@ -157,6 +211,10 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     static let illuminationCommandTimeout: Duration = .seconds(20)
     /// 機器のinventoryが報告する照明設定のname。areaは機器の報告値を使い、汎用flag 1003へ置き換えない。
     static let illuminationSettingName = "lighting_lamp_control"
+    /// GATTモードへ切り替えた後、スキャナーの再起動を待ってから再検索するまでの時間。
+    static let gattSwitchRediscoveryDelay: Duration = .seconds(3)
+    /// GATT切替後に切替先を探す回数。尽きたら利用者に検索から選び直してもらう。
+    static let gattSwitchRediscoveryLimit = 3
 
     struct TuningItem: Equatable {
         let name: String
@@ -211,6 +269,13 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     private var automaticReconnectAttempt = 0
     private var automaticReconnectTask: Task<Void, Never>?
     private var gattModeChangeInProgress = false
+    /// GATTモードへ切り替えた接続元。切替で広告名と識別子が変わる機種があるため（#134）、
+    /// 再起動後は切替元の識別子へ再接続し続けず、再検索で見つけた切替先へ接続する。
+    private var gattSwitchOrigin: BluetoothScannerDevice?
+    private var gattSwitchRediscoveryAttempt = 0
+    /// 切替先を探す再検索を予約済み、または実行中で、検索終了時に接続先を決める。
+    private var gattSwitchRediscoveryPending = false
+    private var gattSwitchRediscoveryTask: Task<Void, Never>?
     private var sdkOutputConfigurationPeripheral: CBPeripheral?
     private var sdkOutputConfigurationInProgress = false
     private var sdkOutputConfigurationTimeoutTask: Task<Void, Never>?
@@ -265,9 +330,17 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         return mode
     }
 
-    var persistedSymbologySnapshot: BluetoothScannerSymbologySnapshot? {
-        guard let data = defaults.data(forKey: Self.symbologySnapshotKey) else { return nil }
-        return try? JSONDecoder().decode(BluetoothScannerSymbologySnapshot.self, from: data)
+    /// 復元待ちの照合前設定。キーはスキャナーの識別子で、別のスキャナーの分は接続を妨げない。
+    var persistedSymbologySnapshots: [String: BluetoothScannerSymbologySnapshot] {
+        symbologySnapshots.all
+    }
+
+    func persistedSymbologySnapshot(for deviceID: String) -> BluetoothScannerSymbologySnapshot? {
+        symbologySnapshots.snapshot(for: deviceID)
+    }
+
+    private var symbologySnapshots: BluetoothScannerSymbologySnapshotStore {
+        BluetoothScannerSymbologySnapshotStore(defaults: defaults)
     }
 
     init(
@@ -281,7 +354,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         if ProcessInfo.processInfo.arguments.contains("-resetBluetoothScanner") {
             defaults.removeObject(forKey: Self.preferredDeviceIDKey)
             defaults.removeObject(forKey: Self.symbologyRecoveryModeKey)
-            defaults.removeObject(forKey: Self.symbologySnapshotKey)
+            symbologySnapshots.removeAll()
             defaults.removeObject(forKey: Self.diagnosticEventsKey)
             defaults.removeObject(forKey: Self.cachedScannerSettingsKey)
             defaults.removeObject(forKey: Self.lastKnownDeviceIDKey)
@@ -313,7 +386,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             configurationState = .ready
             illuminationState = .off
             tuningState = .matched(applied: false)
-            clearPersistedSymbologySnapshot()
+            clearPersistedSymbologySnapshot(deviceID: device.id)
             recordAppliedSymbologyMode(.unrestricted)
             defaults.set(device.id, forKey: Self.preferredDeviceIDKey)
             rememberDevice(device)
@@ -467,6 +540,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                         "Connected: \(device.name) [\(device.id)] "
                             + "(SDK link state \(String(describing: sdkDevice.connectState)))"
                     )
+                    self.finishGATTSwitchRediscovery()
                     self.startLinkLivenessMonitor()
                     self.ensureGATTMode(for: sdkDevice, appDevice: device)
                 case .failure(let error):
@@ -476,7 +550,11 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                         AppLocalization.string("接続できませんでした: \(error.localizedDescription)")
                     )
                     self.trace("Connection failed: \(error.localizedDescription)")
-                    self.scheduleAutomaticReconnect(reason: "connection failure")
+                    if self.gattSwitchOrigin != nil {
+                        self.scheduleGATTSwitchRediscovery(reason: "connection failure")
+                    } else {
+                        self.scheduleAutomaticReconnect(reason: "connection failure")
+                    }
                 }
             }
         }
@@ -493,7 +571,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         tuningState = .matched(applied: false)
         let mode = BluetoothScannerSymbologyMode(expectedCode: expectedCode)
         if mode == .unrestricted {
-            clearPersistedSymbologySnapshot()
+            clearPersistedSymbologySnapshot(deviceID: device.id)
         } else {
             persistSimulatorSymbologySnapshotIfNeeded()
             recordPendingSymbologyMode(mode)
@@ -508,6 +586,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         automaticReconnectTask?.cancel()
         automaticReconnectTask = nil
         automaticReconnectAttempt = 0
+        finishGATTSwitchRediscovery()
 #endif
         reconnectDeviceID = nil
         defaults.removeObject(forKey: Self.preferredDeviceIDKey)
@@ -523,7 +602,9 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         manualDisconnectInProgress = true
         restoreSafeBaselineBeforeDisconnect(sdkDevice)
 #else
-        clearPersistedSymbologySnapshot()
+        if let deviceID = connectedDevice?.id {
+            clearPersistedSymbologySnapshot(deviceID: deviceID)
+        }
         recordAppliedSymbologyMode(.unrestricted)
         configurationState = .unavailable
         illuminationState = .unknown
@@ -579,9 +660,15 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             automaticReconnectAttempt = 0
             verifyLinkLiveness(reason: "foreground")
             reconnectPreferredDevice()
+            if gattSwitchOrigin != nil, !isConnected, !isConnecting {
+                scheduleGATTSwitchRediscovery(reason: "foreground")
+            }
         } else {
             automaticReconnectTask?.cancel()
             automaticReconnectTask = nil
+            gattSwitchRediscoveryTask?.cancel()
+            gattSwitchRediscoveryTask = nil
+            gattSwitchRediscoveryPending = false
             if sdkDiscoveryIsRunning {
                 stopDiscovery()
             }
@@ -641,7 +728,9 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             return
         }
         if mode == .unrestricted {
-            clearPersistedSymbologySnapshot()
+            if let deviceID = connectedDevice?.id {
+                clearPersistedSymbologySnapshot(deviceID: deviceID)
+            }
         } else {
             persistSimulatorSymbologySnapshotIfNeeded()
             recordPendingSymbologyMode(mode)
@@ -676,7 +765,9 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         trace("Simulator configuration retry requested")
         let mode = BluetoothScannerSymbologyMode(expectedCode: expectedCode)
         if mode == .unrestricted {
-            clearPersistedSymbologySnapshot()
+            if let deviceID = connectedDevice?.id {
+                clearPersistedSymbologySnapshot(deviceID: deviceID)
+            }
         } else {
             persistSimulatorSymbologySnapshotIfNeeded()
             recordPendingSymbologyMode(mode)
@@ -977,6 +1068,10 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             }
             reconnectDeviceID = nil
             trace("SDK discovery stopped with \(devices.count) device(s)")
+            if gattSwitchRediscoveryPending {
+                resolveGATTSwitchTarget()
+                return
+            }
             if !isConnected, !isConnecting {
                 scheduleAutomaticReconnect(reason: "preferred device not found")
             }
@@ -1017,8 +1112,8 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         if gattModeChangeInProgress {
             gattModeChangeInProgress = false
             state = .idle
-            trace("Disconnected while applying GATT mode; reconnecting: \(sdkDevice.uuid)")
-            scheduleAutomaticReconnect(reason: "GATT mode applied")
+            trace("Disconnected while applying GATT mode: \(sdkDevice.uuid)")
+            scheduleGATTSwitchRediscovery(reason: "GATT mode applied")
         } else {
             state = .failed(AppLocalization.string("Bluetoothスキャナとの接続が切れました。"))
             trace("Unexpected disconnect: \(sdkDevice.uuid)")
@@ -1158,6 +1253,8 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         }
 
         gattModeChangeInProgress = true
+        gattSwitchOrigin = appDevice
+        gattSwitchRediscoveryAttempt = 0
         state = .connecting(appDevice)
         trace("Scanner Bluetooth mode is \(mode); applying GATT mode (2)")
         let command = """
@@ -1182,6 +1279,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                                 )
                             case .failure(let error):
                                 self.gattModeChangeInProgress = false
+                                self.gattSwitchOrigin = nil
                                 self.state = .failed(
                                     AppLocalization.string(
                                         "GATT設定後にスキャナを再起動できませんでした: \(error.localizedDescription)"
@@ -1196,6 +1294,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                     }
                 case .failure(let error):
                     self.gattModeChangeInProgress = false
+                    self.gattSwitchOrigin = nil
                     self.state = .failed(AppLocalization.string("GATTモードへ切り替えられませんでした: \(error.localizedDescription)"))
                     self.trace("GATT mode setting failed: \(error.localizedDescription)")
                 }
@@ -1221,10 +1320,98 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                     self.connectedSDKDevice = nil
                     self.gattModeChangeInProgress = false
                     self.state = .idle
-                    self.scheduleAutomaticReconnect(reason: "GATT mode restart fallback")
+                    self.scheduleGATTSwitchRediscovery(reason: "GATT mode restart fallback")
                 }
             }
         }
+    }
+
+    /// 切替元のリンクが閉じた後、再起動を待って再検索する。SDKの切断通知と
+    /// 明示切断の完了が両方届いても、検索は1回だけ予約する。
+    private func scheduleGATTSwitchRediscovery(reason: String) {
+        guard let origin = gattSwitchOrigin, !gattSwitchRediscoveryPending else { return }
+        // 切替元の識別子はもう広告されないことがあるため、自動再接続の対象から外す。
+        // 接続できた切替先が、connectの成功時に新しい優先接続先になる。
+        if defaults.string(forKey: Self.preferredDeviceIDKey) == origin.id {
+            defaults.removeObject(forKey: Self.preferredDeviceIDKey)
+        }
+        automaticReconnectTask?.cancel()
+        automaticReconnectTask = nil
+        gattSwitchRediscoveryAttempt += 1
+        guard gattSwitchRediscoveryAttempt <= Self.gattSwitchRediscoveryLimit else {
+            abandonGATTSwitchRediscovery()
+            return
+        }
+        gattSwitchRediscoveryPending = true
+        trace(
+            "GATT mode switch: searching for the restarted scanner "
+                + "(attempt \(gattSwitchRediscoveryAttempt), \(reason))"
+        )
+        gattSwitchRediscoveryTask?.cancel()
+        gattSwitchRediscoveryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: Self.gattSwitchRediscoveryDelay)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, let self else { return }
+            self.gattSwitchRediscoveryTask = nil
+            self.startDiscovery()
+        }
+    }
+
+    /// 再検索の終了時に接続先を決める。切替元の名前に含まれる末尾4桁で終わる別の
+    /// スキャナーが1台だけあればそれが切替先、なければ識別子が変わらない機種として切替元へ戻る。
+    private func resolveGATTSwitchTarget() {
+        gattSwitchRediscoveryPending = false
+        guard let origin = gattSwitchOrigin, !isConnected, !isConnecting else { return }
+        let known = sdkDevices.values.map { sdkDevice in
+            BluetoothScannerDevice(
+                id: sdkDevice.uuid,
+                name: sdkDevice.name ?? sdkDevice.productName ?? "Inateck Scanner"
+            )
+        }
+        let successors = Self.gattModeSuccessors(of: origin, among: known)
+        switch successors.count {
+        case 1:
+            let successor = successors[0]
+            trace(
+                "GATT mode switch: \(origin.name) [\(origin.id)] reappeared as "
+                    + "\(successor.name) [\(successor.id)]; connecting"
+            )
+            connect(successor)
+        case 0 where sdkDevices[origin.id] != nil:
+            trace("GATT mode switch: no renamed scanner found; reconnecting to \(origin.name) [\(origin.id)]")
+            connect(origin, timeout: Self.automaticReconnectTimeout)
+        case 0:
+            scheduleGATTSwitchRediscovery(reason: "scanner not found")
+        default:
+            trace("GATT mode switch: \(successors.count) candidate scanners; waiting for manual selection")
+            abandonGATTSwitchRediscovery()
+        }
+    }
+
+    /// 切替先を見つけられなかった。切替元の識別子を「以前接続したスキャナ」から外し、
+    /// 検索結果から選び直すよう案内する。
+    private func abandonGATTSwitchRediscovery() {
+        guard let origin = gattSwitchOrigin else { return }
+        finishGATTSwitchRediscovery()
+        if defaults.string(forKey: Self.lastKnownDeviceIDKey) == origin.id {
+            defaults.removeObject(forKey: Self.lastKnownDeviceIDKey)
+            defaults.removeObject(forKey: Self.lastKnownDeviceNameKey)
+        }
+        state = .failed(
+            AppLocalization.string("スキャナをGATTモードへ切り替えました。「スキャナを検索」で表示されたスキャナを選んで接続してください。")
+        )
+        trace("GATT mode switch: restarted scanner not found; waiting for manual selection")
+    }
+
+    private func finishGATTSwitchRediscovery() {
+        gattSwitchRediscoveryTask?.cancel()
+        gattSwitchRediscoveryTask = nil
+        gattSwitchRediscoveryPending = false
+        gattSwitchOrigin = nil
+        gattSwitchRediscoveryAttempt = 0
     }
 
     /// 同じ接続でSDK出力設定（FF04）が済んでいれば繰り返さず、読み取り設定へ直接進む。
@@ -1632,13 +1819,12 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             trace("Original symbology restore deferred until the current setting command completes")
             return
         }
-        guard let snapshot = persistedSymbologySnapshot else {
+        guard let snapshot = persistedSymbologySnapshot(for: sdkDevice.uuid) else {
             recordAppliedSymbologyMode(.unrestricted)
             performManualDisconnect(sdkDevice)
             return
         }
-        guard snapshot.deviceID == sdkDevice.uuid,
-              let settings = connectedScannerSettings,
+        guard let settings = connectedScannerSettings,
               let command = Self.symbologySettingCommand(values: snapshot.values, settings: settings) else {
             trace("Original symbology restore skipped because the saved settings do not match")
             performManualDisconnect(sdkDevice)
@@ -1667,7 +1853,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                 case .success:
                     self.connectedSymbologyValues = snapshot.values
                     self.connectedScannerSettingsAreFresh = true
-                    self.clearPersistedSymbologySnapshot()
+                    self.clearPersistedSymbologySnapshot(deviceID: sdkDevice.uuid)
                     self.recordAppliedSymbologyMode(.unrestricted)
                     self.trace(
                         "Restored \(snapshot.values.count) original barcode settings before disconnect"
@@ -1734,23 +1920,22 @@ final class BluetoothScannerService: NSObject, ObservableObject {
 
         let mode = BluetoothScannerSymbologyMode(expectedCode: expectedCode)
 
-        if mode == .unrestricted, persistedSymbologySnapshot == nil {
+        // 復元待ちは接続中のスキャナー自身の分だけを見る。別のスキャナーの分は
+        // そのスキャナーの次回接続で復元するため、ここでは残したまま先へ進む（#135）。
+        let persisted = persistedSymbologySnapshot(for: sdkDevice.uuid)
+        if mode == .unrestricted, persisted == nil {
             recordAppliedSymbologyMode(.unrestricted)
             configurationState = .ready
-            trace("Scanner barcode settings already match the pre-session state")
+            trace(
+                "Scanner barcode settings already match the pre-session state"
+                    + pendingOtherScannerRestoreNote(excluding: sdkDevice.uuid)
+            )
             settingsBecameReady()
             return
         }
 
         let snapshot: BluetoothScannerSymbologySnapshot
-        if let persisted = persistedSymbologySnapshot {
-            guard persisted.deviceID == sdkDevice.uuid else {
-                configurationState = .failed(
-                    AppLocalization.string("別のスキャナーの読み取り設定が復元待ちです。元のスキャナーへ再接続してください。")
-                )
-                trace("Saved symbology snapshot belongs to another scanner")
-                return
-            }
+        if let persisted {
             snapshot = persisted
         } else {
             guard mode != .unrestricted,
@@ -1828,7 +2013,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                     self.connectedSymbologyValues = values
                     self.connectedScannerSettingsAreFresh = true
                     if mode == .unrestricted {
-                        self.clearPersistedSymbologySnapshot()
+                        self.clearPersistedSymbologySnapshot(deviceID: sdkDevice.uuid)
                     }
                     self.recordAppliedSymbologyMode(mode)
                     self.configurationRecoveryAttempt = 0
@@ -1995,8 +2180,10 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         deviceID: String,
         settingsAreFresh: Bool
     ) {
+        // 旧版の記録は1台分の制限状態だけなので、どのスキャナーの復元待ちもないときに限る。
+        // 別のスキャナーの復元待ちで残った制限状態を、今のスキャナーの復旧値にしない。
         guard settingsAreFresh,
-              persistedSymbologySnapshot == nil,
+              persistedSymbologySnapshots.isEmpty,
               persistedSymbologyMode != .unrestricted,
               var values = connectedSymbologyValues,
               Self.hasRequiredSymbologyValues(values) else { return }
@@ -2039,17 +2226,23 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     }
 
     private func persistSymbologySnapshot(_ snapshot: BluetoothScannerSymbologySnapshot) {
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        defaults.set(data, forKey: Self.symbologySnapshotKey)
+        symbologySnapshots.save(snapshot)
     }
 
-    private func clearPersistedSymbologySnapshot() {
-        defaults.removeObject(forKey: Self.symbologySnapshotKey)
+    private func clearPersistedSymbologySnapshot(deviceID: String) {
+        symbologySnapshots.remove(deviceID: deviceID)
+    }
+
+    /// 別のスキャナーの復元待ちが残っていることを診断へ添える。識別子は含めない。
+    private func pendingOtherScannerRestoreNote(excluding deviceID: String) -> String {
+        let count = persistedSymbologySnapshots.keys.filter { $0 != deviceID }.count
+        return count == 0 ? "" : " (\(count) other scanner restore(s) pending)"
     }
 
 #if !INATECK_SDK
     private func persistSimulatorSymbologySnapshotIfNeeded() {
-        guard persistedSymbologySnapshot == nil, let deviceID = connectedDevice?.id else { return }
+        guard let deviceID = connectedDevice?.id,
+              persistedSymbologySnapshot(for: deviceID) == nil else { return }
         persistSymbologySnapshot(
             BluetoothScannerSymbologySnapshot(
                 deviceID: deviceID,
@@ -2065,6 +2258,30 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     }
 
     /// inventoryに存在するチューニング項目（name, 現在値）。inventoryが読めなければnil。
+    /// GATTモードへの切替で名前と識別子が変わったスキャナーを探す（#134）。
+    /// 例: 切替前「Hyper 160B-4F5F-UNI」→ 切替後「HPRT-4F5F」。切替後の名前の
+    /// 最後の「-」以降が4桁の16進数（MAC由来）で、切替前の名前の「-」区切りの
+    /// 一部と一致する、切替元以外のスキャナーを返す。
+    static func gattModeSuccessors(
+        of origin: BluetoothScannerDevice,
+        among devices: [BluetoothScannerDevice]
+    ) -> [BluetoothScannerDevice] {
+        func components(_ name: String) -> [String] {
+            name.split(separator: "-").map {
+                $0.trimmingCharacters(in: .whitespaces).uppercased()
+            }
+        }
+        let originComponents = Set(components(origin.name))
+        var seen = Set<String>()
+        return devices.filter { device in
+            guard device.id != origin.id, seen.insert(device.id).inserted else { return false }
+            let parts = components(device.name)
+            guard parts.count >= 2, let suffix = parts.last,
+                  suffix.count == 4, suffix.allSatisfy(\.isHexDigit) else { return false }
+            return originComponents.contains(suffix)
+        }
+    }
+
     static func tuningItemsPresent(in settings: String) -> [TuningItem]? {
         guard let items = scannerSettingItems(from: settings) else { return nil }
         var current: [String: Int] = [:]
@@ -2264,6 +2481,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             "connection: \(state.statusText)",
             "configuration: \(String(describing: configurationState))",
             "symbology mode: \(persistedSymbologyMode.rawValue)",
+            "pending restores: \(persistedSymbologySnapshots.count)",
             "events: \(diagnosticEvents.count) (limit \(Self.diagnosticEventLimit))",
             ""
         ]

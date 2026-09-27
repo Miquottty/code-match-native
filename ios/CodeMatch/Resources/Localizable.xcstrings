@@ -1899,6 +1899,22 @@
         }
       }
     },
+    "スキャナをGATTモードへ切り替えました。「スキャナを検索」で表示されたスキャナを選んで接続してください。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The scanner was switched to GATT mode. Tap “Search for scanners” and choose the scanner that appears."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキャナをGATTモードへ切り替えました。「スキャナを検索」で表示されたスキャナを選んで接続してください。"
+          }
+        }
+      }
+    },
     "スキャナーから全バーコード種類の設定を取得できませんでした。カメラを使用してください。" : {
       "localizations" : {
         "en" : {
@@ -3029,22 +3045,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "初期設定はOFFです。ONにしても不一致時は自動で進みません。"
-          }
-        }
-      }
-    },
-    "別のスキャナーの読み取り設定が復元待ちです。元のスキャナーへ再接続してください。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Another scanner’s read settings are pending restore. Please reconnect to the original scanner."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "別のスキャナーの読み取り設定が復元待ちです。元のスキャナーへ再接続してください。"
           }
         }
       }
