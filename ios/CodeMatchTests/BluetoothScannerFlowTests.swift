@@ -581,14 +581,15 @@ final class BluetoothScannerFlowTests: XCTestCase {
         XCTAssertEqual(context.viewModel.inputSource, .bluetooth)
     }
 
-    func testRepeatedBluetoothConfigurationFailuresStopAutomaticReturn() {
+    /// 設定失敗が続いても、カメラへの退避は一時的なもの。Readyへ戻るたびにBluetoothへ戻す（#145）。
+    func testRepeatedBluetoothConfigurationFailuresStillReturnToBluetoothWhenReady() {
         let context = makeContext()
         defer { context.cleanup() }
         context.service.startDiscovery()
         context.service.connect(context.service.devices[0])
         context.viewModel.handleBluetoothConnectionState(context.service.state)
 
-        for _ in 0..<ScannerViewModel.bluetoothAutomaticReturnFailureLimit {
+        for _ in 0..<3 {
             context.viewModel.handleBluetoothConfigurationState(.ready)
             XCTAssertEqual(context.viewModel.inputSource, .bluetooth)
             context.service.simulateConfigurationFailure("設定に失敗しました。")
@@ -597,14 +598,73 @@ final class BluetoothScannerFlowTests: XCTestCase {
             context.service.retryConfiguration()
         }
 
-        // 連続失敗の上限に達した後は、Readyへ戻ってもカメラのまま維持する。
         XCTAssertTrue(context.service.isReadyForScanning)
         context.viewModel.handleBluetoothConfigurationState(context.service.configurationState)
+        XCTAssertEqual(context.viewModel.inputSource, .bluetooth)
+    }
+
+    /// 利用者がカメラを選んでも、その箱の照合が終わって次のQRへ進めばBluetoothへ戻す（#145）。
+    func testManualCameraSelectionLastsOnlyUntilTheNextBox() async {
+        let context = makeContext()
+        defer { context.cleanup() }
+        context.service.startDiscovery()
+        context.service.connect(context.service.devices[0])
+        context.viewModel.handleBluetoothConnectionState(context.service.state)
+        XCTAssertEqual(context.viewModel.inputSource, .bluetooth)
+
+        context.viewModel.selectInputSource(.camera)
+        XCTAssertEqual(context.viewModel.inputSource, .camera)
+        // 同じ箱の間は、接続状態の通知が来てもカメラのまま。
+        context.viewModel.handleBluetoothConnectionState(context.service.state)
         XCTAssertEqual(context.viewModel.inputSource, .camera)
 
-        // 利用者が明示的に選び直せばBluetoothへ戻れる。
-        context.viewModel.selectInputSource(.bluetooth)
+        context.viewModel.runDemo(shouldMatch: true)
+        XCTAssertEqual(context.viewModel.step, .result(.match))
+
+        context.viewModel.reset()
+
+        XCTAssertEqual(context.viewModel.step, .qr)
         XCTAssertEqual(context.viewModel.inputSource, .bluetooth)
+        XCTAssertFalse(context.viewModel.isCameraStarting)
+        XCTAssertEqual(context.service.expectedCode, .qr)
+        XCTAssertTrue(context.viewModel.message.contains("BCST-47"))
+    }
+
+    /// QRの取り直しは同じ箱の続きなので、利用者が選んだカメラのまま取り直す。
+    func testRereadQRKeepsTheCameraTheOperatorChoseForThisBox() async {
+        let context = makeContext()
+        defer { context.cleanup() }
+        context.service.startDiscovery()
+        context.service.connect(context.service.devices[0])
+        context.viewModel.handleBluetoothConnectionState(context.service.state)
+        context.viewModel.selectInputSource(.bluetooth)
+        context.service.simulateScan(ScannerViewModel.sampleQRPayload)
+        XCTAssertEqual(context.viewModel.step, .barcode)
+
+        context.viewModel.selectInputSource(.camera)
+        context.viewModel.rereadQR()
+
+        XCTAssertEqual(context.viewModel.step, .qr)
+        XCTAssertEqual(context.viewModel.inputSource, .camera)
+    }
+
+    /// スキャナ接続中に始めた照合は、接続前からカメラが選ばれていてもBluetoothで始める。
+    func testNextBoxReturnsToBluetoothAfterCameraWasUsedBeforeTheScannerConnected() {
+        let context = makeContext()
+        defer { context.cleanup() }
+        context.viewModel.runDemo(shouldMatch: true)
+        XCTAssertEqual(context.viewModel.inputSource, .camera)
+
+        context.service.startDiscovery()
+        context.service.connect(context.service.devices[0])
+        // 結果表示中は工程がないため切り替えない。
+        context.viewModel.handleBluetoothConnectionState(context.service.state)
+        XCTAssertEqual(context.viewModel.inputSource, .camera)
+
+        context.viewModel.reset()
+
+        XCTAssertEqual(context.viewModel.inputSource, .bluetooth)
+        XCTAssertEqual(context.service.expectedCode, .qr)
     }
 
     func testAcceptedBluetoothScanResetsConfigurationFailureCount() async {
