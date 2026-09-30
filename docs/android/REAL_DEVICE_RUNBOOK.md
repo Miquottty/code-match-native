@@ -184,7 +184,7 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 - BLE追加確認（PR #47 / 34d70ed）: 手動切断後もCode128待ち・1件を保持し再接続後の読取続行成功。さらに3分30秒以上電源OFFで待機後、電源ONのみで自動再接続しCode128から続行をユーザーが承認。これは全symbologyの完全復元や異常タイムアウトを直接検証した証拠ではない。
 - 残り: BLEの完全復元・timeout異常系・firmware記録はIssue #19で継続していたが、2026-09-05のIssue #57で打ち切り。BCST-36は検証端末であり、SDK対応端末の接続対象を限定しない。
 - 2026-09-05（#56）: `scannerPoc`を廃止し、SDKを同梱した`release` APKをPixel 7へ導入。BCST-36と接続し、QR→Code 128の照合完了をユーザーが確認した。
-- 追跡: [Issue #23](https://github.com/rimtty/code-match-native/issues/23)、[Issue #19](https://github.com/rimtty/code-match-native/issues/19)。ユーザー承認と自動確認を区別し、未実施項目は完了扱いにしない。
+- 追跡: [Issue #23](https://github.com/Miquottty/code-match-native/issues/23)、[Issue #19](https://github.com/Miquottty/code-match-native/issues/19)。ユーザー承認と自動確認を区別し、未実施項目は完了扱いにしない。
 
 ## 6. 証跡テンプレート
 

@@ -25,9 +25,10 @@ The cross-platform behavior contract lives in [docs/PRODUCT_SPEC.md](docs/PRODUC
 
 ## Git conventions
 
-- Commit author: `rimtty <ttyrim@gmail.com>` (set in the repo-local config). **Do not add a `Co-Authored-By` trailer.**
-- SSH pushes use `~/.ssh/id_ed25519_rimtty` (`core.sshCommand` in the repo-local config).
-- Branch names follow `codex/<topic>`; PRs are squash-merged into `master`. Old local `codex/*` branches are mostly merged leftovers.
+- The repository is `Miquottty/code-match-native` on GitHub (the owner account was renamed from `rimtty`; `origin` is `git@github.com:Miquottty/code-match-native.git`). Use the new owner in `gh -R` and in issue/PR links.
+- Commit author: `Miquottty <ttyrim@gmail.com>` (set in the repo-local config). **Do not add a `Co-Authored-By` trailer.**
+- SSH pushes use `~/.ssh/id_ed25519_rimtty` (`core.sshCommand` in the repo-local config); the key file keeps its old name.
+- Branch names follow `codex/<topic>`; PRs are squash-merged into `master`, and merged branches are deleted locally and on `origin`.
 
 ## Repository layout
 

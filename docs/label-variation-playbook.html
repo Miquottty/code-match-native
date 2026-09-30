@@ -35,7 +35,7 @@
 <body>
 <main>
   <h1>ラベルバリエーション対応プレイブック</h1>
-  <p class="lead">現場のラベルに新しい書式（カード番号の型、品番の桁数、Code 128 の区切り、新しい仕向地など）が現れたときに、何が起きるか・どう切り分けるか・どう直すかをまとめる。2026-09-08 の障害（<a href="https://github.com/rimtty/code-match-native/issues/129">#129</a>）を教訓として書いた。顧客向けのデータ仕様書（<code>docs/qr-barcode-spec-analysis.html</code>、git-ignored）とは別に、リポジトリに残す運用文書である。</p>
+  <p class="lead">現場のラベルに新しい書式（カード番号の型、品番の桁数、Code 128 の区切り、新しい仕向地など）が現れたときに、何が起きるか・どう切り分けるか・どう直すかをまとめる。2026-09-08 の障害（<a href="https://github.com/Miquottty/code-match-native/issues/129">#129</a>）を教訓として書いた。顧客向けのデータ仕様書（<code>docs/qr-barcode-spec-analysis.html</code>、git-ignored）とは別に、リポジトリに残す運用文書である。</p>
 
   <section class="card">
     <h2>1. 何が起きたか（2026-09-08）</h2>
@@ -155,8 +155,8 @@ cd android && ./gradlew lintDebug testDebugUnitTest && ./gradlew :app:assembleRe
   <section class="card">
     <h2>7. 関連</h2>
     <ul>
-      <li>Issue <a href="https://github.com/rimtty/code-match-native/issues/129">#129</a>、PR <a href="https://github.com/rimtty/code-match-native/pull/130">#130</a>（今回の修正）</li>
-      <li>厳格化の経緯: <a href="https://github.com/rimtty/code-match-native/issues/46">#46</a>（カメラ QR の内容検証）、<a href="https://github.com/rimtty/code-match-native/issues/75">#75</a>（カメラと BLE の統一）、<a href="https://github.com/rimtty/code-match-native/issues/78">#78</a>（カメラ Code 128 の形式検証）、<a href="https://github.com/rimtty/code-match-native/issues/93">#93</a>（部分一致フォールバックの撤去）</li>
+      <li>Issue <a href="https://github.com/Miquottty/code-match-native/issues/129">#129</a>、PR <a href="https://github.com/Miquottty/code-match-native/pull/130">#130</a>（今回の修正）</li>
+      <li>厳格化の経緯: <a href="https://github.com/Miquottty/code-match-native/issues/46">#46</a>（カメラ QR の内容検証）、<a href="https://github.com/Miquottty/code-match-native/issues/75">#75</a>（カメラと BLE の統一）、<a href="https://github.com/Miquottty/code-match-native/issues/78">#78</a>（カメラ Code 128 の形式検証）、<a href="https://github.com/Miquottty/code-match-native/issues/93">#93</a>（部分一致フォールバックの撤去）</li>
       <li><a href="PRODUCT_SPEC.md"><code>docs/PRODUCT_SPEC.md</code></a>、<a href="../shared/test-fixtures/matching-cases.json"><code>shared/test-fixtures/matching-cases.json</code></a>、<a href="android/TEST_PARITY.md"><code>docs/android/TEST_PARITY.md</code></a></li>
       <li>ツール: <code>shared/tools/decode_label_photos.swift</code>、<code>ios/scripts/verify_label_pairs.sh</code></li>
     </ul>
