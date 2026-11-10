@@ -72,7 +72,7 @@ Macへの接続後は、XcodeのDevices and Simulatorsで「Connect via network�
 
 `BluetoothScannerService.trace(_:)` は接続・設定・読取受理の段階を、payload・設定値・device識別子を含めない形で記録します（1回の読取受理につき1行）。記録先は2つあります。
 
-- **アプリ内**: 直近300件を`UserDefaults`へ保持し、設定画面の「接続診断」に直近20件を表示します。同じ欄の「診断ログを共有」で全件をテキストとして共有シートへ渡せるので、長時間セッションで読取が止まったときは、その場でAirDropやメールで書き出してください。「診断ログを消去」で記録を空にできます。
+- **アプリ内**: 直近1,000件を`UserDefaults`へ保持し、設定画面の「接続診断」に直近20件を表示します。同じ欄の「診断ログを共有」で全件をテキストとして共有シートへ渡せるので、長時間セッションで読取が止まったときは、その場でAirDropやメールで書き出してください。「診断ログを消去」で記録を空にできます。
 - **統合ログ**: `os.Logger`（subsystem `jp.rimtty.CodeMatch`、category `BluetoothScanner`、`privacy: .public`）にも同じ行を出力します。USB接続したMacから次のように取得できます。
 
 ```sh

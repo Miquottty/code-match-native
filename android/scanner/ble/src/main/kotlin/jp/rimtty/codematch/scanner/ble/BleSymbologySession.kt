@@ -161,7 +161,14 @@ class BleSymbologySession(
                     }.getOrNull()
                 }
                 if (snapshot == null || !snapshot.hasRequiredSessionSymbols()) {
-                    fail("Scanner settings are incomplete")
+                    // Size and failure type only; the settings values stay out of diagnostics.
+                    val detail = result.fold(
+                        onSuccess = { payload ->
+                            "${payload.size} bytes, " + if (snapshot == null) "not decodable" else "QR/Code 128 missing"
+                        },
+                        onFailure = { error -> "read failed: ${error.javaClass.simpleName}" },
+                    )
+                    fail("Scanner settings are incomplete", detail)
                     return@read
                 }
                 if (snapshot.deviceId != device.id) {
@@ -561,11 +568,12 @@ class BleSymbologySession(
             flag = item.flag,
         )
 
-    private fun fail(reason: String) {
+    private fun fail(reason: String, detail: String? = null) {
         mutableState = BleSymbologySessionState.Failed(reason)
         mutableConfiguration = ConfigurationState.Failed(reason)
         emit()
-        diagnostics.error("Scanner configuration failed")
+        // Reasons are fixed, payload-free strings, so the log can name which one it was.
+        diagnostics.error("Scanner configuration failed: $reason" + detail?.let { " ($it)" }.orEmpty())
     }
 
     private fun clearActiveSession(preserveExpectedFormat: Boolean = false) {

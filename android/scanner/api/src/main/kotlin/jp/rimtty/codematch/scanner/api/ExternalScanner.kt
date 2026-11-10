@@ -95,6 +95,12 @@ interface ExternalScanner {
     fun reconnectKnownDevice(): Boolean
     fun setExpectedFormat(format: ScanFormat?): Boolean
 
+    /**
+     * Notes in the diagnostics how the app handled a Bluetooth read: the scan
+     * log's event kind and rejection reason only, never the value read.
+     */
+    fun recordScanOutcome(event: String, reason: String?) {}
+
     // Naming aliases keep the contract easy to bridge from the Swift service
     // and from adapters that call discovery a scan.
     fun discover(): Boolean = startDiscovery()

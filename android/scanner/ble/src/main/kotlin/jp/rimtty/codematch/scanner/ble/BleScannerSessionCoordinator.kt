@@ -364,6 +364,6 @@ class BleScannerSessionCoordinator(
     )
 
     private companion object {
-        const val MAX_DIAGNOSTICS = 300
+        const val MAX_DIAGNOSTICS = 1000
     }
 }

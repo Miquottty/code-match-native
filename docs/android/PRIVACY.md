@@ -10,7 +10,7 @@
 | 一致履歴 | Roomへ端末内保存。一致したQR/Code 128のpayloadを箱詳細とPDF生成に使う | analytics、クラッシュレポート、サーバーへ送信しない |
 | 不一致・無効入力 | 照合状態とフィードバックに使い、下記の照合ログへ1行として記録する | 一致履歴、BLE診断、外部送信へは保存しない |
 | 照合ログ | カメラ・BLEどちらの入力でも、判定（一致・不一致・重複）・不受理・セッション開始/終了を1件ずつRoomへ端末内保存する。読み取ったQR / Code 128のpayloadを含み、直近5,000件を超えると古いものから削除する。設定画面最下部で件数を表示し、消去できる | analytics、クラッシュレポート、サーバーへ送信しない。Auto Backupとdevice-to-device transferから除外する。利用者が「照合ログをすべて共有」「照合ログを保存」を選んだ時だけ、JSON Linesを共有シートまたは選択先へ渡す |
-| BLE診断 | 接続・設定・エラーの種別・連番・段階名を最大300件端末内に保持し、設定画面には直近20件の種別と連番だけを表示 | scan payloadを保存・表示・送信しない。利用者が「診断ログを管理者へ送る」「診断ログを保存」を選んだ時だけ、段階名とアプリ／端末の版情報を含むテキストを渡す。前者は管理者宛て（`contact-codematch@googlegroups.com`）のメール作成画面を開き、テキストを専用cache（`cache/codematch-export/`）経由で添付する。送信は利用者がメールアプリで行い、アプリ自身は通信しない（メールアプリがなければ従来の共有シート）。後者は選択先へ直接書く |
+| BLE診断 | 接続・設定・エラーの種別・連番・段階名（スキャナーの版・電池残量、照合ログのevent名と拒否理由を含む）を最大1,000件端末内に保持し、設定画面には直近20件の種別と連番だけを表示 | scan payloadを保存・表示・送信しない。利用者が「診断ログを管理者へ送る」「診断ログを保存」を選んだ時だけ、段階名とアプリ／端末の版情報を含むテキストを渡す。前者は管理者宛て（`contact-codematch@googlegroups.com`）のメール作成画面を開き、テキストを専用cache（`cache/codematch-export/`）経由で添付する。送信は利用者がメールアプリで行い、アプリ自身は通信しない（メールアプリがなければ従来の共有シート）。後者は選択先へ直接書く |
 | BLE復旧snapshot | `release`が公式SDK adapterへ接続し、開始前のsymbology設定を端末内に保存する | Auto Backupとdevice-to-device transferから除外する |
 | BLE既知端末identity | 同じ除外DataStoreへversion/profile、device ID、表示名だけを保存。設定値・scan payload・raw frameは含めない | Auto Backupとdevice-to-device transferから除外する |
 | PDF | ユーザーが保存を選んだ時は選択先へ、共有を選んだ時は専用cacheからSharesheetへ渡す | 明示操作の時だけアプリ領域外へ出る |

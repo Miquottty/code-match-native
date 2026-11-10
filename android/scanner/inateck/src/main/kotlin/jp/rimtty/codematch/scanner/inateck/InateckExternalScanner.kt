@@ -35,6 +35,8 @@ private const val TICK_INTERVAL_MILLIS = 250L
 private const val RESET_RECONNECT_DELAY_MILLIS = 8_000L
 private const val TUNING_RETRY_DELAY_MILLIS = 1_000L
 private const val TUNING_ATTEMPT_LIMIT = 10
+private const val DEVICE_INFO_TIMEOUT_MILLIS = 4_000L
+private const val DEVICE_INFO_ATTEMPT_LIMIT = 10
 
 /**
  * Official-SDK-backed scanner bound by the `release` app variant.
@@ -60,6 +62,11 @@ class InateckExternalScanner private constructor(
     private var tuningDeadline = 0L
     private var tuningRetryAt = 0L
     private var tuningAttempts = 0
+    private var deviceInfoGeneration = 0L
+    private var deviceInfoDone = false
+    private var deviceInfoPending = false
+    private var deviceInfoDeadline = 0L
+    private var deviceInfoAttempts = 0
     private var applicationForeground = false
     private val deferredSettings = InateckDeferredSettings()
 
@@ -111,13 +118,18 @@ class InateckExternalScanner private constructor(
         tuningGeneration++
         tuningAttempts = 0
         tuningRetryAt = 0L
+        deviceInfoGeneration++
+        deviceInfoDone = false
+        deviceInfoPending = false
+        deviceInfoAttempts = 0
         publishTuning(TuningState.UNKNOWN)
     }
 
     private val settingsBusy: Boolean
         get() = illuminationWaitingForDisconnect ||
             illuminationState == IlluminationState.APPLYING ||
-            tuningState == TuningState.APPLYING
+            tuningState == TuningState.APPLYING ||
+            deviceInfoPending
 
     /**
      * Read tuning runs once per connection after the illumination check has
@@ -170,6 +182,45 @@ class InateckExternalScanner private constructor(
             tuningRetryAt = nowMillis() + TUNING_RETRY_DELAY_MILLIS
             publishTuning(if (tuningAttempts >= TUNING_ATTEMPT_LIMIT) TuningState.UNSUPPORTED else TuningState.UNKNOWN)
             drainDeferredSettings()
+        }
+    }
+
+    /**
+     * Version, hardware and battery are read once per connection for the
+     * diagnostics log, after tuning has settled. Unlike a settings command, an
+     * unanswered read is only abandoned: a diagnostic must never cost the link.
+     */
+    private fun refreshDeviceInfo() {
+        if (illuminationWaitingForDisconnect) return
+        val deviceId = connectedDevice?.id ?: return
+        if (deviceInfoPending) {
+            if (nowMillis() < deviceInfoDeadline) return
+            deviceInfoGeneration++
+            deviceInfoPending = false
+            gateway.abandonDeviceInfoRead()
+            connection.recordDiagnostic("Scanner info query timed out", error = true)
+            drainDeferredSettings()
+            return
+        }
+        val tuningSettled = tuningState != TuningState.UNKNOWN && tuningState != TuningState.APPLYING
+        if (deviceInfoDone || !applicationForeground || !tuningSettled || !configurationState.isReady) return
+
+        val generation = ++deviceInfoGeneration
+        deviceInfoPending = true
+        deviceInfoDeadline = nowMillis() + DEVICE_INFO_TIMEOUT_MILLIS
+        val accepted = gateway.readDeviceInfo(deviceId) { info ->
+            if (!closed && generation == deviceInfoGeneration && connectedDevice?.id == deviceId) {
+                deviceInfoPending = false
+                info.diagnosticLines().forEach { connection.recordDiagnostic(it) }
+                drainDeferredSettings()
+            }
+        }
+        if (accepted) {
+            deviceInfoDone = true
+        } else if (generation == deviceInfoGeneration) {
+            // Another SDK operation owns the link; try again on a later tick.
+            deviceInfoPending = false
+            deviceInfoDone = ++deviceInfoAttempts >= DEVICE_INFO_ATTEMPT_LIMIT
         }
     }
 
@@ -310,6 +361,7 @@ class InateckExternalScanner private constructor(
             reconcileTransportReset()
             refreshIllumination()
             refreshTuning()
+            refreshDeviceInfo()
             handler.postDelayed(this, TICK_INTERVAL_MILLIS)
         }
     }
@@ -391,6 +443,11 @@ class InateckExternalScanner private constructor(
         return delegate.reconnectKnownDevice()
     }
 
+    override fun recordScanOutcome(event: String, reason: String?) {
+        if (closed) return
+        connection.recordDiagnostic("Scan outcome: $event" + reason?.let { " ($it)" }.orEmpty())
+    }
+
     override fun setExpectedFormat(format: ScanFormat?): Boolean {
         transport.refreshReadiness()
         if (!closed && settingsBusy) {
@@ -404,6 +461,7 @@ class InateckExternalScanner private constructor(
         applicationForeground = true
         transport.refreshReadiness()
         if (closed) return
+        connection.recordDiagnostic("Application phase: foreground")
         if (settingsBusy) {
             deferredSettings.offer(InateckDeferredSettings.Action.ApplicationActive(true))
         } else delegate.setApplicationActive(true, nowMillis())
@@ -416,6 +474,7 @@ class InateckExternalScanner private constructor(
 
     override fun onStop(owner: LifecycleOwner) {
         applicationForeground = false
+        if (!closed) connection.recordDiagnostic("Application phase: background")
         startupRecovery.onBackground()
         if (settingsBusy) {
             deferredSettings.offer(InateckDeferredSettings.Action.ApplicationActive(false))

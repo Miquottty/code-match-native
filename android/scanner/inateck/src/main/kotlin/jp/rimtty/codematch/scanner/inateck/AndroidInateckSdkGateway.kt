@@ -39,6 +39,7 @@ internal class AndroidInateckSdkGateway(
     private var manualDisconnectInFlight = false
     private var connectionAttempt = 0L
     private val operationGate = InateckOperationGate()
+    private var deviceInfoOperation: Long? = null
     private var disconnectingDevice: BleScannerDevice? = null
     private var closed = false
     private var gattModeListener: ((InateckGattModeEvent) -> Unit)? = null
@@ -716,6 +717,57 @@ internal class AndroidInateckSdkGateway(
             finishOperation(operation)
             false
         }
+    }
+
+    override fun readDeviceInfo(
+        deviceId: String,
+        completion: (InateckDeviceInfo) -> Unit,
+    ): Boolean {
+        val device = activeDevice?.takeIf { it.mac == deviceId } ?: return false
+        val attempt = connectionAttempt
+        val operation = beginOperation(device, attempt) ?: return false
+        deviceInfoOperation = operation
+        fun finish(info: InateckDeviceInfo) {
+            if (!isCurrentOperation(device, attempt, operation)) return
+            finishOperation(operation)
+            deviceInfoOperation = null
+            completion(info)
+        }
+        // The three reads share the settings characteristic, so they run one
+        // after another inside a single gated operation.
+        return runCatching {
+            device.messager.getVersion { version ->
+                dispatch {
+                    if (!isCurrentOperation(device, attempt, operation)) return@dispatch
+                    val versionText = version.getOrNull()
+                    runCatching {
+                        device.messager.getHardwareInfo { hardware ->
+                            dispatch {
+                                if (!isCurrentOperation(device, attempt, operation)) return@dispatch
+                                val hardwareText = hardware.getOrNull()
+                                runCatching {
+                                    device.messager.getBatteryInfo { battery ->
+                                        dispatch {
+                                            finish(InateckDeviceInfo(versionText, hardwareText, battery.getOrNull()))
+                                        }
+                                    }
+                                }.onFailure { finish(InateckDeviceInfo(versionText, hardwareText, null)) }
+                            }
+                        }
+                    }.onFailure { finish(InateckDeviceInfo(versionText, null, null)) }
+                }
+            }
+            true
+        }.getOrElse {
+            finishOperation(operation)
+            deviceInfoOperation = null
+            false
+        }
+    }
+
+    override fun abandonDeviceInfoRead() {
+        deviceInfoOperation?.let(::finishOperation)
+        deviceInfoOperation = null
     }
 
     override fun setGattModeListener(listener: ((InateckGattModeEvent) -> Unit)?) {

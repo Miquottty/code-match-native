@@ -178,6 +178,6 @@ class SettingsViewModel @Inject constructor(
 
     private companion object {
         /** Retained for share/save; the screen itself renders only the latest 20. */
-        const val MAX_DIAGNOSTICS = 300
+        const val MAX_DIAGNOSTICS = 1000
     }
 }
