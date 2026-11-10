@@ -402,6 +402,7 @@ class ScanViewModel @Inject constructor(
         // The coordinator is built before a session id exists, so it records
         // events without one and this lambda stamps the active session on.
         created.scanLogRecorder = ScanLogRecorder { event ->
+            if (event.source == ScanLogSource.BLUETOOTH) scanner.recordScanOutcome(event.event, event.reason)
             enqueueScanLog(event.copy(sessionId = activeSessionId))
         }
         created.onStateChanged = { publishCoordinatorState() }

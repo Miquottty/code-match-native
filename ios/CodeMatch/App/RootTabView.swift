@@ -53,9 +53,11 @@ struct RootTabView: View {
         .tint(AppTheme.green)
         .preferredColorScheme(.light)
         .task {
+            bluetoothScanner.recordApplicationPhase(String(describing: scenePhase))
             bluetoothScanner.setApplicationActive(scenePhase == .active)
         }
         .onChange(of: scenePhase) { _, phase in
+            bluetoothScanner.recordApplicationPhase(String(describing: phase))
             bluetoothScanner.setApplicationActive(phase == .active)
         }
     }

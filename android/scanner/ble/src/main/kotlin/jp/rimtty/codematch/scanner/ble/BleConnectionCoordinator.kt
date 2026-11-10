@@ -539,7 +539,7 @@ class BleConnectionCoordinator(
                 pendingPhysicalLinkGeneration = null
                 preferredDevice = event.device
                 transition(connection = BleConnectionState.Failed(event.reason))
-                diagnostics.error("Scanner connection failed")
+                diagnostics.error("Scanner connection failed: ${event.reason}")
                 if (shouldReconnect || !wasManual) scheduleReconnect(operationNowMillis())
             }
             is BleTransportEvent.DisconnectFailed -> {

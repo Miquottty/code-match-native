@@ -9,7 +9,7 @@
 - debug構成: `scanner/fake`のFake scannerで照合フローを駆動する。emulator・CIのinstrumentationはこの構成で実行する。
 - 接続対象: 採用SDKに対応するスキャナー。BCST-36（firmware `V2.6.16 AI JP`、Bluetooth `OTA_D_V0.3.7`）とHPRT-4F5Fは検証機種であり、機種の許可リストではない。
 - 接続時の機器設定（2026-09-06、#59）: 照明OFF（`lighting_lamp_control`=2、設定画面のトグルで読取中点灯へ）の確認後に、読取チューニング（多コード`*_read_more_code`/`*_read_multi`=0、反転`read_inverse_color`/`*_read_phase`=0、赤光消灯時間`auto_close_mode`=20≒4秒）をinventoryと比較し、差分のある項目だけを書いて再取得で確認する（PR #74）。値は機器側に保存され、切断時に復元しない。name/flag対応表は[`../ios/IMPLEMENTATION_GUIDE.md`](../ios/IMPLEMENTATION_GUIDE.md)。
-- 診断: BLE診断イベントを300件保持し、設定画面の「接続診断」から共有シートまたはSAF保存先へテキストで書き出せる（PR #76）。段階名と版情報のみで読取値は含まない。
+- 診断: BLE診断イベントを1,000件保持し、設定画面の「接続診断」から共有シートまたはSAF保存先へテキストで書き出せる（PR #76）。段階名と版情報のみで読取値は含まない。
 
 ## 到達点
 

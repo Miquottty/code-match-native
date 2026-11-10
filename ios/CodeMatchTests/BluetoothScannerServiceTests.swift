@@ -403,6 +403,36 @@ final class BluetoothScannerServiceTests: XCTestCase {
         XCTAssertNil(defaults.data(forKey: BluetoothScannerSymbologySnapshotStore.snapshotsKey))
     }
 
+    func testSettingsCacheKeepsEachScannerSeparately() {
+        let defaults = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let cache = BluetoothScannerSettingsCache(defaults: defaults)
+
+        cache.save("settings-a", deviceID: "SCANNER-A")
+        XCTAssertEqual(cache.settings(for: "SCANNER-A"), "settings-a")
+        XCTAssertNil(cache.settings(for: "SCANNER-B"))
+
+        cache.save("settings-b", deviceID: "SCANNER-B")
+        XCTAssertEqual(cache.settings(for: "SCANNER-A"), "settings-a")
+        XCTAssertEqual(cache.settings(for: "SCANNER-B"), "settings-b")
+
+        cache.removeAll()
+        XCTAssertNil(cache.settings(for: "SCANNER-A"))
+        XCTAssertNil(defaults.object(forKey: BluetoothScannerSettingsCache.settingsKey))
+    }
+
+    func testSettingsCacheNeverServesTheLegacySlotWithNoOwner() {
+        let defaults = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("settings-of-unknown-scanner", forKey: BluetoothScannerSettingsCache.legacySettingsKey)
+        let cache = BluetoothScannerSettingsCache(defaults: defaults)
+
+        XCTAssertNil(cache.settings(for: "SCANNER-A"))
+
+        cache.save("settings-a", deviceID: "SCANNER-A")
+        XCTAssertNil(defaults.string(forKey: BluetoothScannerSettingsCache.legacySettingsKey))
+    }
+
     func testSnapshotStoreCarriesOverTheLegacySingleSlotForItsOwnScanner() throws {
         let defaults = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -811,6 +841,65 @@ final class BluetoothScannerServiceTests: XCTestCase {
         service.clearDiagnosticEvents()
         XCTAssertTrue(service.diagnosticEvents.isEmpty)
         XCTAssertNil(defaults.data(forKey: BluetoothScannerService.diagnosticEventsKey))
+    }
+
+    func testDiagnosticDescriptionNamesTheErrorCaseBehindTheNumber() {
+        enum SampleError: Error { case responseTimeout }
+
+        let text = BluetoothScannerService.diagnosticDescription(SampleError.responseTimeout)
+
+        XCTAssertTrue(text.contains("SampleError.responseTimeout"), text)
+    }
+
+    func testSettingsShapeDescriptionReportsSizeWithoutValues() {
+        let settings = #"{"data":[{"area":"3","value":"1","name":"qrcode_on","flag":"2022"}]}"#
+
+        XCTAssertEqual(
+            BluetoothScannerService.settingsShapeDescription(settings),
+            "\(settings.count) chars, 1 items"
+        )
+        XCTAssertEqual(
+            BluetoothScannerService.settingsShapeDescription("partial"),
+            "7 chars, not a settings list"
+        )
+    }
+
+    func testScannerInfoTextStaysOnOneShortLine() {
+        XCTAssertEqual(BluetoothScannerService.scannerInfoText(.success("V1.2\nB3")), "V1.2 B3")
+        XCTAssertEqual(
+            BluetoothScannerService.scannerInfoText(.success(String(repeating: "x", count: 200))).count,
+            80
+        )
+        XCTAssertTrue(
+            BluetoothScannerService.scannerInfoText(.failure(CancellationError()))
+                .hasPrefix("unavailable (")
+        )
+    }
+
+    func testApplicationPhaseAndScanOutcomeAreTracedWithoutPayloads() {
+        let defaults = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let service = BluetoothScannerService(defaults: defaults)
+        service.clearDiagnosticEvents()
+
+        service.recordApplicationPhase("background")
+        service.recordApplicationPhase("background")
+        service.recordApplicationPhase("active")
+        service.recordScanOutcome("rejected", reason: "invalid_format")
+        service.recordScanOutcome("qr_accepted", reason: nil)
+
+        XCTAssertEqual(
+            service.diagnosticEvents.map(\.message),
+            [
+                "Application phase: background",
+                "Application phase: active",
+                "Scan outcome: rejected (invalid_format)",
+                "Scan outcome: qr_accepted"
+            ]
+        )
+        let log = service.diagnosticLogText()
+        XCTAssertTrue(log.contains("scanner battery: unknown"), log)
+        XCTAssertTrue(log.contains("limit 1000"), log)
     }
 
     private func isolatedDefaults() -> UserDefaults {

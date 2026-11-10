@@ -62,6 +62,18 @@ internal interface InateckSdkGateway {
     ): Boolean = false
 
     /**
+     * Reads version, hardware and battery for the diagnostics log. Returns
+     * false when another operation owns the link or the gateway cannot read.
+     */
+    fun readDeviceInfo(
+        deviceId: String,
+        completion: (InateckDeviceInfo) -> Unit,
+    ): Boolean = false
+
+    /** Gives up a [readDeviceInfo] that has not answered; late callbacks are dropped. */
+    fun abandonDeviceInfoRead() {}
+
+    /**
      * Receives the connect-time Bluetooth-mode check (#137). Before the link
      * is reported connected, the gateway reads the settings; a scanner that is
      * not in GATT mode is switched with [InateckGattMode.SWITCH_COMMAND],

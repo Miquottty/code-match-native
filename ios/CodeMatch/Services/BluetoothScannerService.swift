@@ -168,6 +168,36 @@ struct BluetoothScannerSymbologySnapshotStore {
     }
 }
 
+/// 設定を読み出せない接続で使う、前回の設定応答（area/nameの対応表）をスキャナーごとに保存する。
+/// 1台分しか持たないと、別のスキャナーの対応表と値で設定を書き込んでしまう。
+struct BluetoothScannerSettingsCache {
+    static let settingsKey = "bluetoothScanner.cachedScannerSettingsByDevice"
+    /// 持ち主を記録していなかった旧形式。どのスキャナーの分か分からないため読まずに捨てる。
+    static let legacySettingsKey = "bluetoothScanner.cachedScannerSettings"
+
+    let defaults: UserDefaults
+
+    func settings(for deviceID: String) -> String? {
+        all[deviceID]
+    }
+
+    func save(_ settings: String, deviceID: String) {
+        var cached = all
+        cached[deviceID] = settings
+        defaults.set(cached, forKey: Self.settingsKey)
+        defaults.removeObject(forKey: Self.legacySettingsKey)
+    }
+
+    func removeAll() {
+        defaults.removeObject(forKey: Self.settingsKey)
+        defaults.removeObject(forKey: Self.legacySettingsKey)
+    }
+
+    private var all: [String: String] {
+        defaults.dictionary(forKey: Self.settingsKey) as? [String: String] ?? [:]
+    }
+}
+
 struct BluetoothScannerDiagnosticEvent: Identifiable, Equatable, Codable {
     let id = UUID()
     let date: Date
@@ -181,7 +211,6 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     static let preferredDeviceIDKey = "bluetoothScanner.preferredDeviceID"
     static let symbologyRecoveryModeKey = "bluetoothScanner.symbologyRecoveryMode"
     static let diagnosticEventsKey = "bluetoothScanner.diagnosticEvents"
-    static let cachedScannerSettingsKey = "bluetoothScanner.cachedScannerSettings"
     static let lastKnownDeviceIDKey = "bluetoothScanner.lastKnownDeviceID"
     static let lastKnownDeviceNameKey = "bluetoothScanner.lastKnownDeviceName"
     static let discoveryTimeout: TimeInterval = 5
@@ -196,7 +225,9 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     static let linkLivenessInterval: Duration = .seconds(30)
     /// 端末内に保持する診断イベント数。長時間セッションの事後解析に足りる量を残しつつ、
     /// 設定画面には直近`diagnosticDisplayLimit`件だけを表示する。
-    static let diagnosticEventLimit = 300
+    static let diagnosticEventLimit = 1000
+    /// 診断用の読み出し（版・電池残量）を待つ上限。超えても接続は閉じず先へ進む。
+    static let scannerInfoQueryTimeout: Duration = .seconds(4)
     static let diagnosticDisplayLimit = 20
     static let settingsRetryLimit = 4
     /// 読み取り設定の書込が失敗したときに、同じ要求を再送する回数。
@@ -257,6 +288,14 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     )
     private var reconnectDeviceID: String?
     private var lastDeliveredCode: (value: String, date: Date)?
+    /// 診断用: この接続で版・電池残量を読み出したか。接続のたびに1回だけ読む。
+    private var scannerInfoQueried = false
+    private var lastScannerVersion: String?
+    private var lastScannerHardware: String?
+    private var lastScannerBattery: (percent: Int, date: Date)?
+    /// 診断用: スキャナーごとに最後に記録した設定name一覧。同じ一覧を繰り返し記録しない。
+    private var tracedInventoryNames: [String: String] = [:]
+    private var lastTracedApplicationPhase: String?
     private(set) var expectedCode: ExpectedCode?
 
 #if INATECK_SDK
@@ -352,6 +391,10 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         BluetoothScannerSymbologySnapshotStore(defaults: defaults)
     }
 
+    private var settingsCache: BluetoothScannerSettingsCache {
+        BluetoothScannerSettingsCache(defaults: defaults)
+    }
+
     init(
         defaults: UserDefaults = .standard,
         now: @escaping () -> Date = Date.init
@@ -365,7 +408,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             defaults.removeObject(forKey: Self.symbologyRecoveryModeKey)
             symbologySnapshots.removeAll()
             defaults.removeObject(forKey: Self.diagnosticEventsKey)
-            defaults.removeObject(forKey: Self.cachedScannerSettingsKey)
+            settingsCache.removeAll()
             defaults.removeObject(forKey: Self.lastKnownDeviceIDKey)
             defaults.removeObject(forKey: Self.lastKnownDeviceNameKey)
         } else if let data = defaults.data(forKey: Self.diagnosticEventsKey),
@@ -604,6 +647,10 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                     self.illuminationState = .unknown
                     self.pendingIlluminationRequest = nil
                     self.tuningState = .unknown
+                    self.scannerInfoQueried = false
+                    self.lastScannerVersion = nil
+                    self.lastScannerHardware = nil
+                    self.lastScannerBattery = nil
                     self.trace(
                         "Connected: \(device.name) [\(device.id)] "
                             + "(SDK link state \(String(describing: sdkDevice.connectState)))"
@@ -617,7 +664,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                     self.state = .failed(
                         AppLocalization.string("接続できませんでした: \(error.localizedDescription)")
                     )
-                    self.trace("Connection failed: \(error.localizedDescription)")
+                    self.trace("Connection failed: \(Self.diagnosticDescription(error))")
                     if self.gattSwitchOrigin != nil {
                         self.scheduleGATTSwitchRediscovery(reason: "connection failure")
                     } else {
@@ -904,7 +951,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                             self.finishIllumination(
                                 generation,
                                 state: .failed(failureMessage),
-                                message: "Illumination write failed: \(error.localizedDescription)"
+                                message: "Illumination write failed: \(Self.diagnosticDescription(error))"
                             )
                             return
                         }
@@ -979,6 +1026,49 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         lastDeliveredCode = (value, receivedAt)
         trace("Scan callback accepted (\(value.utf8.count) UTF-8 bytes)")
         onCode?(value)
+    }
+
+    /// 診断用のエラー表記。SDKのエラーは説明文が番号だけになるため、型とcase名も残す。
+    static func diagnosticDescription(_ error: any Error) -> String {
+        "\(error.localizedDescription) [\(String(reflecting: error))]"
+    }
+
+    /// 設定応答の大きさだけを診断へ残す（値は含めない）。
+    static func settingsShapeDescription(_ settings: String) -> String {
+        let items = scannerSettingItems(from: settings).map { "\($0.count) items" }
+            ?? "not a settings list"
+        return "\(settings.count) chars, \(items)"
+    }
+
+    /// 版・電池残量の応答を1行へ収める。改行を除き、長すぎる値は切り詰める。
+    static func scannerInfoText(_ result: Result<String, any Error>) -> String {
+        switch result {
+        case .success(let value):
+            let line = value.split(whereSeparator: \.isNewline).joined(separator: " ")
+            return String(line.prefix(80))
+        case .failure(let error):
+            return "unavailable (\(diagnosticDescription(error)))"
+        }
+    }
+
+    private func lastBatteryNote() -> String {
+        guard let battery = lastScannerBattery else { return "" }
+        let age = Int(now().timeIntervalSince(battery.date))
+        return " (battery \(battery.percent) read \(age)s earlier)"
+    }
+
+    /// アプリの前面・背面の切り替わりを診断へ残す。応答待ちのまま時間が空いた理由を
+    /// 後から切り分けるためで、同じ状態の繰り返しは記録しない。
+    func recordApplicationPhase(_ phase: String) {
+        guard lastTracedApplicationPhase != phase else { return }
+        lastTracedApplicationPhase = phase
+        trace("Application phase: \(phase)")
+    }
+
+    /// Bluetoothで読んだ値をアプリが受理したか、どの理由で拒否したかを診断へ残す。
+    /// 記録するのは照合ログのevent名とreasonだけで、読み取った値は含めない。
+    func recordScanOutcome(_ event: String, reason: String?) {
+        trace("Scan outcome: \(event)" + (reason.map { " (\($0))" } ?? ""))
     }
 
     static func normalizedPayload(_ rawValue: String) -> String {
@@ -1184,7 +1274,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             scheduleGATTSwitchRediscovery(reason: "GATT mode applied")
         } else {
             state = .failed(AppLocalization.string("Bluetoothスキャナとの接続が切れました。"))
-            trace("Unexpected disconnect: \(sdkDevice.uuid)")
+            trace("Unexpected disconnect: \(sdkDevice.uuid)\(lastBatteryNote())")
             scheduleAutomaticReconnect(reason: "unexpected disconnect")
         }
     }
@@ -1204,11 +1294,11 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                             for: sdkDevice,
                             appDevice: appDevice,
                             after: settingsAttempt,
-                            reason: "incomplete response"
+                            reason: "incomplete response (\(Self.settingsShapeDescription(settings)))"
                         )
                         return
                     }
-                    self.defaults.set(settings, forKey: Self.cachedScannerSettingsKey)
+                    self.settingsCache.save(settings, deviceID: sdkDevice.uuid)
                     self.continueScannerConfiguration(
                         with: settings,
                         sdkDevice: sdkDevice,
@@ -1216,7 +1306,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                         settingsAreFresh: true
                     )
                 case .failure(let error):
-                    self.trace("Bluetooth mode query failed: \(error.localizedDescription)")
+                    self.trace("Bluetooth mode query failed: \(Self.diagnosticDescription(error))")
                     self.retryScannerSettings(
                         for: sdkDevice,
                         appDevice: appDevice,
@@ -1235,7 +1325,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         reason: String
     ) {
         if attempt >= Self.settingsRetryLimit {
-            if let cachedSettings = defaults.string(forKey: Self.cachedScannerSettingsKey),
+            if let cachedSettings = settingsCache.settings(for: sdkDevice.uuid),
                Self.hasRequiredSymbologySettings(cachedSettings) {
                 trace("Scanner settings unavailable; using cached setting areas")
                 continueScannerConfiguration(
@@ -1289,7 +1379,12 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         // 診断へ残す。payload・device識別子・接頭辞/接尾辞などの文字設定は含めない。
         if let items = Self.scannerSettingItems(from: settings) {
             let names = items.compactMap { $0["name"] as? String }.sorted().joined(separator: ",")
-            trace("Scanner inventory names: \(names)")
+            if tracedInventoryNames[sdkDevice.uuid] == names {
+                trace("Scanner inventory names unchanged (\(items.count) items)")
+            } else {
+                tracedInventoryNames[sdkDevice.uuid] = names
+                trace("Scanner inventory names: \(names)")
+            }
             let tuning = items.compactMap { item -> String? in
                 guard let name = item["name"] as? String,
                       Self.tuningSettingNames.contains(name),
@@ -1364,7 +1459,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                     self.gattModeChangeInProgress = false
                     self.gattSwitchOrigin = nil
                     self.state = .failed(AppLocalization.string("GATTモードへ切り替えられませんでした: \(error.localizedDescription)"))
-                    self.trace("GATT mode setting failed: \(error.localizedDescription)")
+                    self.trace("GATT mode setting failed: \(Self.diagnosticDescription(error))")
                 }
             }
         }
@@ -1593,8 +1688,11 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     /// 照明の確認が済んだ後、この接続でまだ確認していなければ読取チューニングを揃える。
     /// 差分がなければ書込を行わず、あれば1コマンドで書いて再取得で確認する。
     private func applyTuningProfileIfNeeded() {
-        guard tuningState == .unknown,
-              let sdkDevice = connectedSDKDevice,
+        guard tuningState == .unknown else {
+            queryScannerInfoIfNeeded()
+            return
+        }
+        guard let sdkDevice = connectedSDKDevice,
               isConnected,
               configurationState == .ready,
               !settingCommandInFlight,
@@ -1610,17 +1708,20 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         guard let present = Self.tuningItemsPresent(in: settings), !present.isEmpty else {
             tuningState = .unsupported
             trace("Scanner inventory has none of the tuning items")
+            queryScannerInfoIfNeeded()
             return
         }
         let differences = Self.tuningDifferences(settings: settings)
         guard !differences.isEmpty else {
             tuningState = .matched(applied: false)
             trace("Scanner tuning already matches (\(present.count) items)")
+            queryScannerInfoIfNeeded()
             return
         }
         guard let command = Self.tuningCommand(settings: settings, items: differences) else {
             tuningState = .failed(AppLocalization.string("読取チューニングを適用できませんでした。"))
             trace("Scanner tuning command could not be built from the inventory")
+            queryScannerInfoIfNeeded()
             return
         }
 
@@ -1644,7 +1745,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                     self.finishTuning(
                         generation,
                         state: .failed(failureMessage),
-                        message: "Scanner tuning write failed: \(error.localizedDescription)"
+                        message: "Scanner tuning write failed: \(Self.diagnosticDescription(error))"
                     )
                     return
                 }
@@ -1691,6 +1792,83 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         settingCommandTimeoutTask = nil
         settingCommandInFlight = false
         tuningState = state
+        trace(message)
+        if configurationState == .configuring, connectedSDKDevice != nil {
+            applyExpectedCodeConfiguration(revision: symbologyConfigurationRevision)
+        }
+        if !settingCommandInFlight, let pending = pendingIlluminationRequest {
+            pendingIlluminationRequest = nil
+            setIllumination(pending)
+        }
+        if !settingCommandInFlight {
+            queryScannerInfoIfNeeded()
+        }
+    }
+
+    /// 版と電池残量を接続ごとに1回だけ診断へ残す。設定応答と同じcharacteristicを使うため
+    /// 設定コマンドのゲートを通すが、診断用の読み出しなので応答がなくても接続は閉じず、
+    /// 打ち切って先へ進む。読み取り設定・照明・チューニングが済んだ後にだけ行う。
+    private func queryScannerInfoIfNeeded() {
+        guard !scannerInfoQueried,
+              tuningState != .unknown,
+              tuningState != .applying,
+              let sdkDevice = connectedSDKDevice,
+              isConnected,
+              configurationState == .ready,
+              !settingCommandInFlight,
+              !manualDisconnectInProgress else { return }
+
+        scannerInfoQueried = true
+        settingCommandGeneration += 1
+        let generation = settingCommandGeneration
+        settingCommandInFlight = true
+        settingCommandTimeoutTask?.cancel()
+        settingCommandTimeoutTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: Self.scannerInfoQueryTimeout)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, let self else { return }
+            self.finishScannerInfoQuery(generation, message: "Scanner info query timed out")
+        }
+
+        let manager = sdkDevice.messageManager
+        manager.getVersion { [weak self] version in
+            Task { @MainActor in
+                guard let self, generation == self.settingCommandGeneration else { return }
+                self.lastScannerVersion = try? version.get()
+                self.trace("Scanner version: \(Self.scannerInfoText(version))")
+                manager.getHardwareInfo { [weak self] hardware in
+                    Task { @MainActor in
+                        guard let self, generation == self.settingCommandGeneration else { return }
+                        self.lastScannerHardware = try? hardware.get()
+                        self.trace("Scanner hardware: \(Self.scannerInfoText(hardware))")
+                        manager.getBatteryInfo { [weak self] battery in
+                            Task { @MainActor in
+                                guard let self, generation == self.settingCommandGeneration else { return }
+                                if case .success(let percent) = battery {
+                                    self.lastScannerBattery = (percent, self.now())
+                                }
+                                self.finishScannerInfoQuery(
+                                    generation,
+                                    message: "Scanner battery: \(Self.scannerInfoText(battery.map { String($0) }))"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func finishScannerInfoQuery(_ generation: Int, message: String) {
+        guard generation == settingCommandGeneration else { return }
+        settingCommandTimeoutTask?.cancel()
+        settingCommandTimeoutTask = nil
+        // 打ち切った後に届く応答はgeneration不一致で破棄する。
+        settingCommandGeneration += 1
+        settingCommandInFlight = false
         trace(message)
         if configurationState == .configuring, connectedSDKDevice != nil {
             applyExpectedCodeConfiguration(revision: symbologyConfigurationRevision)
@@ -1826,7 +2004,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             finishSDKOutputConfiguration(
                 peripheral,
                 message: "SDK-output configuration could not discover FF00: "
-                    + (error?.localizedDescription ?? "service missing")
+                    + (error.map(Self.diagnosticDescription) ?? "service missing")
             )
             return
         }
@@ -1845,7 +2023,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             finishSDKOutputConfiguration(
                 peripheral,
                 message: "SDK-output configuration could not discover FF04: "
-                    + (error?.localizedDescription ?? "characteristic missing")
+                    + (error.map(Self.diagnosticDescription) ?? "characteristic missing")
             )
             return
         }
@@ -1943,7 +2121,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                     // 元設定と制限中の記録は消さず、次回接続時の復旧を必ず再試行する。
                     self.trace(
                         "Original symbology restore before disconnect failed: "
-                            + error.localizedDescription
+                            + Self.diagnosticDescription(error)
                     )
                 }
                 self.performManualDisconnect(sdkDevice)
@@ -1979,7 +2157,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                     self.trace("Disconnected")
                 case .failure(let error):
                     self.state = .failed(AppLocalization.string("切断に失敗しました: \(error.localizedDescription)"))
-                    self.trace("Disconnect failed: \(error.localizedDescription)")
+                    self.trace("Disconnect failed: \(Self.diagnosticDescription(error))")
                 }
             }
         }
@@ -2106,7 +2284,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                 case .failure(let error):
                     self.trace(
                         "Scanner symbology configuration failed (attempt \(attempt + 1)): "
-                            + error.localizedDescription
+                            + Self.diagnosticDescription(error)
                     )
                     // トリガー入力と設定応答の競合など一過性の失敗は同じ要求を再送し、
                     // 尽きたときだけ失敗として公開し、自動復旧の予約へ進む。
@@ -2212,7 +2390,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                     case .failure(let error):
                         self.trace(
                             "Scanner link close after symbology timeout failed: "
-                                + error.localizedDescription
+                                + Self.diagnosticDescription(error)
                         )
                     }
                     // 切断完了前に再接続を開始すると、同じSDKデバイス上で
@@ -2563,6 +2741,9 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             "configuration: \(String(describing: configurationState))",
             "symbology mode: \(persistedSymbologyMode.rawValue)",
             "pending restores: \(persistedSymbologySnapshots.count)",
+            "scanner version: \(lastScannerVersion ?? "unknown")",
+            "scanner hardware: \(lastScannerHardware ?? "unknown")",
+            "scanner battery: \(lastScannerBattery.map { "\($0.percent) (read \(formatter.string(from: $0.date)))" } ?? "unknown")",
             "events: \(diagnosticEvents.count) (limit \(Self.diagnosticEventLimit))",
             ""
         ]
@@ -2667,7 +2848,7 @@ extension BluetoothScannerService: CBCentralManagerDelegate {
             self.finishSDKOutputConfiguration(
                 peripheral,
                 message: "SDK-output configuration connection failed: "
-                    + (error?.localizedDescription ?? "unknown error")
+                    + (error.map(Self.diagnosticDescription) ?? "unknown error")
             )
         }
     }
@@ -2688,7 +2869,7 @@ extension BluetoothScannerService: CBCentralManagerDelegate {
             self.finishSDKOutputConfiguration(
                 peripheral,
                 message: "SDK-output configuration link closed before completion: "
-                    + (error?.localizedDescription ?? "no error")
+                    + (error.map(Self.diagnosticDescription) ?? "no error")
             )
         }
     }

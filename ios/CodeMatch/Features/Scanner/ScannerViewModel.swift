@@ -874,6 +874,9 @@ final class ScannerViewModel: ObservableObject {
         message: String? = nil,
         stepOverride: String? = nil
     ) {
+        if inputSource == .bluetooth {
+            bluetoothScanner.recordScanOutcome(event, reason: reason)
+        }
         scanLog.record(
             ScanLogEvent(
                 at: Date(),
