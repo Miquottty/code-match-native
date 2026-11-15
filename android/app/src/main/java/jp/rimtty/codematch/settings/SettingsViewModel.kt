@@ -11,6 +11,7 @@ import jp.rimtty.codematch.feature.settings.SettingsPresentationState
 import jp.rimtty.codematch.feature.settings.SettingsScannerCommands
 import jp.rimtty.codematch.feature.settings.SettingsUiAction
 import jp.rimtty.codematch.feature.settings.SettingsUiState
+import jp.rimtty.codematch.feature.settings.selectedDeviceIdAfterConnectionChange
 import jp.rimtty.codematch.feedback.FeedbackPlayer
 import jp.rimtty.codematch.locale.AppLanguageSynchronizer
 import jp.rimtty.codematch.scanner.api.ConnectionState
@@ -156,24 +157,44 @@ class SettingsViewModel @Inject constructor(
         _state.update(::scannerState)
     }
 
-    private fun scannerState(current: SettingsUiState): SettingsUiState = current.copy(
-        illuminationState = scanner.illuminationState,
-        tuningState = scanner.tuningState,
-        devices = scanner.devices,
-        connectionState = scanner.connectionState,
-        configurationState = scanner.configurationState,
-        diagnosticEvents = scanner.diagnosticEvents.takeLast(MAX_DIAGNOSTICS),
-        scannerIssue = scannerIssueFor(scanner.connectionState, scanner.configurationState),
-        presentation = if (!scanner.supportsConnectionControls) {
-            SettingsPresentationState.RELEASE_CAMERA_ONLY
-        } else {
-            SettingsPresentationState.FAKE_BLE
-        },
-    )
+    private fun scannerState(current: SettingsUiState): SettingsUiState {
+        val connection = scanner.connectionState
+        return current.copy(
+            illuminationState = scanner.illuminationState,
+            tuningState = scanner.tuningState,
+            devices = scanner.devices,
+            knownDevice = scanner.knownDevice,
+            automaticReconnectPaused = scanner.isAutomaticReconnectPaused,
+            connectionState = connection,
+            // A newly connected scanner becomes the selection, so a scanner that
+            // returned under another identity is what Reconnect/Retry target.
+            selectedDeviceId = selectedDeviceIdAfterConnectionChange(
+                selectedDeviceId = current.selectedDeviceId,
+                previous = current.connectionState,
+                current = connection,
+            ),
+            configurationState = scanner.configurationState,
+            diagnosticEvents = scanner.diagnosticEvents.takeLast(MAX_DIAGNOSTICS),
+            scannerIssue = scannerIssueFor(connection, scanner.configurationState),
+            presentation = if (!scanner.supportsConnectionControls) {
+                SettingsPresentationState.RELEASE_CAMERA_ONLY
+            } else {
+                SettingsPresentationState.FAKE_BLE
+            },
+        )
+    }
 
-    /** A refused connection request is surfaced, never silently dropped (#137). */
+    /**
+     * A refused connection request is surfaced, never silently dropped (#137).
+     * While Bluetooth itself is unavailable the issue card explains the cause,
+     * so the "disconnect first" text is not added there.
+     */
     private fun updateAfterScannerRequest(accepted: Boolean) {
-        _state.update { scannerState(it.copy(connectRequestRejected = !accepted)) }
+        val rejected = SettingsScannerCommands.showsConnectRejection(
+            accepted = accepted,
+            connection = scanner.connectionState,
+        )
+        _state.update { scannerState(it.copy(connectRequestRejected = rejected)) }
     }
 
     private companion object {

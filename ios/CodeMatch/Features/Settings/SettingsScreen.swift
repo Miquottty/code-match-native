@@ -205,6 +205,8 @@ struct SettingsScreen: View {
         .sheet(isPresented: $showsScannerSetupGuide) {
             BluetoothScannerSetupGuide {
                 showsScannerSetupGuide = false
+                // 案内を開いている間に接続が済んでいたら、検索は始めずに閉じるだけにする。
+                guard !bluetoothScanner.isConnected else { return }
                 bluetoothScanner.startDiscovery()
             }
         }
@@ -394,8 +396,19 @@ struct SettingsScreen: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(AppTheme.green)
-                        .disabled(isSearching || bluetoothScanner.connectingDeviceID == knownDevice.id)
+                        // 検索中でも選べる。選ぶとサービスが検索より接続を優先する（#137）。
+                        // 押せなくするのは、このスキャナーへ接続している最中だけ。
+                        .disabled(bluetoothScanner.connectingDeviceID == knownDevice.id)
                         .accessibilityIdentifier("knownScannerReconnectButton")
+                        // 切断を押した後は自動で再接続しない（#137）。画面が止まって見えないよう、
+                        // 待っていてもつながらないことを伝える。
+                        if bluetoothScanner.automaticReconnectIsPaused {
+                            Text("このスキャナには自動で再接続しません。使うときは上のボタンを押してください。")
+                                .font(.caption2)
+                                .foregroundStyle(AppTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("knownScannerReconnectPausedHint")
+                        }
                     }
 
                     Button {

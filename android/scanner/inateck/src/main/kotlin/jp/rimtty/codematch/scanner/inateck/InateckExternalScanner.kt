@@ -352,18 +352,25 @@ class InateckExternalScanner private constructor(
     private var reconnectScheduled = false
     private val resetReconnect = Runnable {
         reconnectScheduled = false
-        if (!closed && !gattSwitch.isActive) delegate.reconnectKnownDevice()
+        // The operator's Disconnect also outlives a reconnect that a transport
+        // reset would have scheduled after it.
+        if (!closed && !gattSwitch.isActive && !connection.isOperatorDisconnected) {
+            delegate.reconnectKnownDevice()
+        }
     }
     private val startupRecovery = InateckStartupRecovery {
         // Never let automatic recovery redirect or reset a connection the
-        // operator (or the GATT-switch follow-up) has already started (#137).
-        if (closed || gattSwitch.isActive || delegate.queuedSelection != null ||
-            delegate.connectionState is ConnectionState.Connecting
-        ) {
-            false
-        } else {
-            delegate.reconnectKnownDevice()
-        }
+        // operator (or the GATT-switch follow-up) has already started, and
+        // never undo the operator's Disconnect (#137).
+        val decision = InateckRecoveryPolicy.decide(
+            closed = closed,
+            gattSwitchActive = gattSwitch.isActive,
+            selectionQueued = delegate.queuedSelection != null,
+            connecting = delegate.connectionState is ConnectionState.Connecting,
+            operatorDisconnected = connection.isOperatorDisconnected,
+        )
+        decision.diagnosticLine?.let { connection.recordDiagnostic(it) }
+        decision.reconnects && delegate.reconnectKnownDevice()
     }
 
     /** Follows a scanner restarted in GATT mode under a new identity (#137). */
@@ -464,6 +471,10 @@ class InateckExternalScanner private constructor(
     override val isReadyForScanning: Boolean
         get() = delegate.isReadyForScanning
     override val supportsConnectionControls: Boolean = true
+    override val knownDevice: ScannerDevice?
+        get() = delegate.knownDevice
+    override val isAutomaticReconnectPaused: Boolean
+        get() = delegate.isAutomaticReconnectPaused
     override val expectedFormat: ScanFormat?
         get() = delegate.expectedFormat
 
@@ -500,20 +511,31 @@ class InateckExternalScanner private constructor(
     override fun connect(device: ScannerDevice): Boolean {
         transport.refreshReadiness()
         if (closed) return false
+        // Any operator connection request ends an earlier Disconnect,
+        // whatever the outcome of this request.
+        connection.setOperatorDisconnected(false)
         cancelAutomaticFollowUps()
         return delegate.connect(device)
     }
 
+    /**
+     * Operator-facing disconnect: the scanner stays disconnected until the
+     * operator connects again. Neither a return to the foreground nor a
+     * process restart reconnects it; the known device is kept for the
+     * explicit reconnect. Internal closes use the delegate and do not set it.
+     */
     override fun disconnect(): Boolean {
         transport.refreshReadiness()
         if (closed) return false
         cancelAutomaticFollowUps()
+        connection.setOperatorDisconnected(true)
         return delegate.disconnect()
     }
 
     override fun reconnectKnownDevice(): Boolean {
         transport.refreshReadiness()
         if (closed) return false
+        connection.setOperatorDisconnected(false)
         cancelAutomaticFollowUps()
         return delegate.reconnectKnownDevice()
     }

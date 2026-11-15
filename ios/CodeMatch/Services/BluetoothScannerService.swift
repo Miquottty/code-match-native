@@ -375,6 +375,17 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         if case .connecting(let device) = state { return device.id }
         return nil
     }
+    /// 以前接続したスキャナーを覚えているが、自動では再接続しない状態（#137）。作業者が
+    /// 切断した後がこれに当たり、次に作業者が接続するまで続く。設定画面は、何も起きない
+    /// 理由をこの値で案内する。
+    var automaticReconnectIsPaused: Bool {
+        guard !isConnected, !isConnecting, reconnectableDevice != nil else { return false }
+#if INATECK_SDK
+        // GATTモードへの切替中は、切替先を自動で探して接続する。
+        guard gattSwitchOrigin == nil else { return false }
+#endif
+        return defaults.string(forKey: Self.preferredDeviceIDKey)?.isEmpty != false
+    }
     var reconnectableDevice: BluetoothScannerDevice? {
         guard let id = defaults.string(forKey: Self.lastKnownDeviceIDKey), !id.isEmpty else {
             return nil
@@ -462,9 +473,16 @@ final class BluetoothScannerService: NSObject, ObservableObject {
 #endif
     }
 
+    /// スキャナーを検索する。リンクを保持している間は検索を始めず、`state`と`devices`も
+    /// 書き換えない。接続中に検索すると`state`だけが未接続へ戻り、リンクは残ったまま
+    /// 選び直しも読み取りも受け付けなくなった（#137）。別のスキャナーへ替えるときは先に切断する。
     func startDiscovery() {
         trace("Discovery requested")
 #if INATECK_SDK
+        guard connectedSDKDevice == nil else {
+            trace("Discovery request ignored: a scanner link is held")
+            return
+        }
         guard !sdkDiscoveryIsRunning else {
             trace("Discovery request ignored: scan already running")
             return
@@ -505,6 +523,10 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             }
         }
 #else
+        guard !isConnected else {
+            trace("Discovery request ignored: a scanner link is held")
+            return
+        }
         state = .searching
         let device = Self.simulatorDevice
         devices = [device]
@@ -535,6 +557,11 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     /// 復元待ちスナップショットは残し、そのスキャナーの次回接続で復元する。
     func connectSelectedDevice(_ device: BluetoothScannerDevice) {
         trace("Scanner selected by the operator: \(device.name) [\(device.id)]")
+#if INATECK_SDK
+        // リンクは残っているのに`state`だけが未接続へ戻っていたら、先に接続済みへ戻す。
+        // 以降は通常の規則（接続済み／先に切断）がそのまま当てはまり、切断ボタンも再び出る。
+        restoreConnectedStateIfLinkIsHeld(reason: "scanner selected")
+#endif
         guard connectedDevice?.id != device.id else {
             trace("Selected scanner is already connected")
             return
@@ -544,7 +571,8 @@ final class BluetoothScannerService: NSObject, ObservableObject {
             return
         }
 #if INATECK_SDK
-        // GATT切替中などリンクは確立済みで設定途中の端末は、ここで閉じずに終わるのを待つ。
+        // ここまで来てリンクを保持しているのは、GATTモードへ切り替えている最中だけ。
+        // リンクは確立済みで設定途中なので、ここで閉じずに終わるのを待つ。
         guard connectedSDKDevice == nil else {
             trace("Selected scanner ignored: the current scanner link is still being configured")
             return
@@ -557,7 +585,13 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         automaticReconnectTask = nil
         automaticReconnectAttempt = 0
         finishGATTSwitchRediscovery()
-        if sdkDiscoveryIsRunning || pendingDiscovery {
+        // SDKが把握しているスキャナーなら、検索を止めてすぐ接続する。まだ見つかっていない
+        // スキャナー（起動直後の「以前接続したスキャナ」）を検索中に選んだときは、動いている
+        // 検索を止めて始め直さず、その検索で見つかり次第つなぐ。止めた検索の終了通知が
+        // 遅れて届くと、始め直した検索の接続待ち（`reconnectDeviceID`）を消してしまうため。
+        let selectedDeviceIsKnownToSDK = sdkDevices[device.id] != nil
+            || BLEManager.shared.devices.contains(where: { $0.uuid == device.id })
+        if selectedDeviceIsKnownToSDK, sdkDiscoveryIsRunning || pendingDiscovery {
             pendingDiscovery = false
             sdkDiscoveryIsRunning = false
             BLEManager.shared.stopScan()
@@ -583,6 +617,9 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         // 消したりscan callbackが二重登録されたりする。接続中・接続済みなら無視する。
         if let connectedSDKDevice, connectedSDKDevice.uuid == device.id {
             trace("Connect request ignored: already connected to \(device.name)")
+            // 自動再接続がここへ来るのは`state`が未接続へ戻っているとき。リンクは生きているので
+            // 接続済みへ戻し、無視したまま未接続の表示で止まらないようにする（#137）。
+            restoreConnectedStateIfLinkIsHeld(reason: "connect request")
             return
         }
         if isConnecting {
@@ -1540,6 +1577,40 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         }
     }
 
+    /// リンクを保持しているのに`state`が接続済みでないとき、接続済みへ戻す（#137）。
+    /// この状態では設定画面に切断ボタンが出ず、選び直しも読み取りも受け付けなくなる。
+    /// GATTモードへ切り替えている最中は、リンクを保ったまま意図して「接続中」と
+    /// 表示しているので戻さない。戻したときだけ true。
+    @discardableResult
+    private func restoreConnectedStateIfLinkIsHeld(reason: String) -> Bool {
+        guard let sdkDevice = connectedSDKDevice,
+              !isConnected,
+              !gattModeChangeInProgress else { return false }
+        let known = reconnectableDevice
+        let device = devices.first(where: { $0.id == sdkDevice.uuid })
+            ?? (known?.id == sdkDevice.uuid ? known : nil)
+            ?? BluetoothScannerDevice(
+                id: sdkDevice.uuid,
+                name: sdkDevice.name ?? sdkDevice.productName ?? "Inateck Scanner"
+            )
+        appendDeviceIfNeeded(device)
+        state = .connected(device)
+        trace("Connection state restored for the held scanner link (\(reason))")
+        return true
+    }
+
+    /// 切断を頼まれたときに実行中だった設定コマンドが終わったら、切断の続き（元設定の復元、
+    /// リンクを閉じる）へ進む。続きへ進んだときだけ true。照明・チューニング・診断用の
+    /// 読み出しの完了がここを通らないと、切断の依頼が消えて接続したままになった。
+    private func continueManualDisconnectIfRequested() -> Bool {
+        guard manualDisconnectInProgress,
+              !settingCommandInFlight,
+              let sdkDevice = connectedSDKDevice else { return false }
+        trace("Manual disconnect continued after the setting command finished")
+        restoreSafeBaselineBeforeDisconnect(sdkDevice)
+        return true
+    }
+
     /// 別の端末への接続試行を打ち切る。SDKの接続待ちを閉じ、遅れて届く完了通知は
     /// `connectAttemptGeneration`の不一致で捨てる。
     private func abandonPendingConnection(reason: String) {
@@ -1722,6 +1793,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         settingCommandInFlight = false
         illuminationState = state
         trace(message)
+        if continueManualDisconnectIfRequested() { return }
         // 照明処理中に工程が変わっていれば読み取り設定を先に進め、
         // その後で残っている照明要求を処理する。
         if configurationState == .configuring, connectedSDKDevice != nil {
@@ -1855,6 +1927,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         settingCommandInFlight = false
         tuningState = state
         trace(message)
+        if continueManualDisconnectIfRequested() { return }
         if configurationState == .configuring, connectedSDKDevice != nil {
             applyExpectedCodeConfiguration(revision: symbologyConfigurationRevision)
         }
@@ -1943,6 +2016,9 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         settingCommandGeneration += 1
         settingCommandInFlight = false
         trace(message)
+        // 切断の続きへ進んだ後は、呼び出し側の後続処理（内蔵バッファーの確認）も
+        // `manualDisconnectInProgress`を見て何もしない。
+        if continueManualDisconnectIfRequested() { return true }
         if configurationState == .configuring, connectedSDKDevice != nil {
             applyExpectedCodeConfiguration(revision: symbologyConfigurationRevision)
         }
@@ -2055,8 +2131,10 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     /// SDKの`disconnectHandler`が呼ばれないままリンクが落ちた場合に備え、
     /// SDKが保持するリンク状態から切断を検知する。接続直後の基準値から
     /// `disconnected`側へ変化したときだけ切断として扱い、通信は発生させない。
+    /// `state`の表示ではなく保持しているリンクそのものを見る。`state`が未接続へ
+    /// ずれていても、落ちたリンクを持ち続けないようにする（#137）。
     private func verifyLinkLiveness(reason: String) {
-        guard let sdkDevice = connectedSDKDevice, isConnected else { return }
+        guard let sdkDevice = connectedSDKDevice else { return }
         let linkState = sdkDevice.connectState
         guard linkState != connectedLinkBaselineState,
               linkState != .connected,

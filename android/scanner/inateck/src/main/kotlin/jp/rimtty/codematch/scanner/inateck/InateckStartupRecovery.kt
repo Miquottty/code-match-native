@@ -29,3 +29,47 @@ internal class InateckStartupRecovery(
         foreground = false
     }
 }
+
+/** What automatic recovery does when the app returns to the foreground. */
+internal enum class InateckRecoveryDecision(
+    /** Payload-free diagnostic line for a skip worth explaining, else null. */
+    val diagnosticLine: String? = null,
+) {
+    RECONNECT,
+    SKIP_CLOSED,
+    SKIP_GATT_SWITCH,
+    SKIP_OPERATOR_SELECTION,
+    SKIP_CONNECTING,
+    SKIP_OPERATOR_DISCONNECTED(
+        "Automatic reconnect skipped: the operator disconnected the scanner",
+    ),
+    ;
+
+    val reconnects: Boolean get() = this == RECONNECT
+}
+
+/**
+ * Decides whether automatic recovery may reconnect the known scanner (#137).
+ *
+ * It never redirects or resets a connection the operator or the GATT-switch
+ * follow-up has already started, and it never undoes the operator's
+ * Disconnect: that lasts until the operator connects again, across foreground
+ * returns and process restarts. Kept free of Android types so the whole table
+ * is unit-tested; the scanner only supplies its current state.
+ */
+internal object InateckRecoveryPolicy {
+    fun decide(
+        closed: Boolean,
+        gattSwitchActive: Boolean,
+        selectionQueued: Boolean,
+        connecting: Boolean,
+        operatorDisconnected: Boolean,
+    ): InateckRecoveryDecision = when {
+        closed -> InateckRecoveryDecision.SKIP_CLOSED
+        gattSwitchActive -> InateckRecoveryDecision.SKIP_GATT_SWITCH
+        selectionQueued -> InateckRecoveryDecision.SKIP_OPERATOR_SELECTION
+        connecting -> InateckRecoveryDecision.SKIP_CONNECTING
+        operatorDisconnected -> InateckRecoveryDecision.SKIP_OPERATOR_DISCONNECTED
+        else -> InateckRecoveryDecision.RECONNECT
+    }
+}

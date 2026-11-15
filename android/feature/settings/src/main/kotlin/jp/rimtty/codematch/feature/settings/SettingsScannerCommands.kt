@@ -4,6 +4,8 @@ import jp.rimtty.codematch.scanner.api.ConfigurationState
 import jp.rimtty.codematch.scanner.api.ConnectionState
 import jp.rimtty.codematch.scanner.api.ExternalScanner
 import jp.rimtty.codematch.scanner.api.ScannerDevice
+import jp.rimtty.codematch.scanner.api.ScannerIssue
+import jp.rimtty.codematch.scanner.api.scannerIssueFor
 
 /**
  * Scanner requests issued by the Settings card (#137).
@@ -14,6 +16,10 @@ import jp.rimtty.codematch.scanner.api.ScannerDevice
  * when nothing is selected. Each function returns false only when the adapter
  * refused a connection request, so the host can surface it instead of
  * silently dropping the tap.
+ *
+ * After an unresolved GATT mode switch the scanner has a new identity and the
+ * selection may be the one that no longer exists, so Retry searches instead of
+ * connecting it.
  */
 object SettingsScannerCommands {
     fun connect(scanner: ExternalScanner, device: ScannerDevice): Boolean =
@@ -27,6 +33,12 @@ object SettingsScannerCommands {
     fun retry(scanner: ExternalScanner, state: SettingsUiState): Boolean {
         val connection = scanner.connectionState
         return when {
+            scannerIssueFor(connection, scanner.configurationState) ==
+                ScannerIssue.RESELECT_REQUIRED -> {
+                // The operator picks the restarted scanner from fresh results.
+                scanner.startDiscovery()
+                true
+            }
             connection is ConnectionState.Searching -> {
                 scanner.stopDiscovery()
                 scanner.startDiscovery()
@@ -55,4 +67,13 @@ object SettingsScannerCommands {
             }
         }
     }
+
+    /**
+     * Whether a refused request shows the "disconnect the connected scanner
+     * first" text. That advice is wrong while Bluetooth itself is unavailable
+     * (off, or the permission is missing): the issue card of that state
+     * already says what to do, so the text is left out there.
+     */
+    fun showsConnectRejection(accepted: Boolean, connection: ConnectionState): Boolean =
+        !accepted && connection !is ConnectionState.Unavailable
 }

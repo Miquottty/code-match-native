@@ -56,7 +56,10 @@ object SettingsTestTags {
     const val CONNECT = "settings_scanner_connect"
     const val DISCONNECT = "settings_scanner_disconnect"
     const val RECONNECT = "settings_scanner_reconnect"
+    const val RECONNECT_KNOWN = "settings_scanner_reconnect_known"
     const val CONNECT_REJECTED = "settings_scanner_connect_rejected"
+    const val DISCONNECT_FIRST_HINT = "settings_scanner_disconnect_first_hint"
+    const val RECONNECT_PAUSED_HINT = "settings_scanner_reconnect_paused_hint"
     const val RETRY = "settings_scanner_retry"
     const val OPEN_BLUETOOTH_SETTINGS = "settings_scanner_open_bluetooth_settings"
     const val SCANNER_ISSUE = "settings_scanner_issue"
@@ -133,6 +136,17 @@ data class SettingsUiState(
      * scanner action, so a tap is never silently dropped (#137).
      */
     val connectRequestRejected: Boolean = false,
+    /**
+     * The scanner the adapter remembers and Reconnect falls back to, or null
+     * when none is remembered (never connected, or forgotten after a GATT mode
+     * switch). It may be absent from [devices], e.g. after a process restart.
+     */
+    val knownDevice: ScannerDevice? = null,
+    /**
+     * True while the adapter does not reconnect [knownDevice] on its own
+     * because the operator disconnected it (`ExternalScanner.isAutomaticReconnectPaused`).
+     */
+    val automaticReconnectPaused: Boolean = false,
 ) {
     /** Compatibility/readability aliases for hosts that name these values explicitly. */
     val appSettings: AppSettings get() = settings
@@ -150,6 +164,41 @@ data class SettingsUiState(
      */
     val reconnectTarget: ScannerDevice?
         get() = devices.firstOrNull { it.id == selectedDeviceId }
+
+    /**
+     * A scanner is connected and the operator selected a different one. An
+     * established link is never redirected, so the screen tells the operator
+     * to disconnect first instead of leaving the selection without effect
+     * (#137). False when nothing is connected or the connected scanner itself
+     * is selected.
+     */
+    val showsDisconnectFirstHint: Boolean
+        get() {
+            val connected = connectionState.connectedDevice ?: return false
+            val selected = reconnectTarget ?: return false
+            return selected.id != connected.id
+        }
+
+    /**
+     * The remembered scanner to offer as a one-tap reconnect: shown while
+     * nothing is connected and nothing is selected, so the operator does not
+     * have to search and select it again after a restart or after an earlier
+     * Disconnect. With a selection, Connect/Reconnect target that selection
+     * instead. Offering it starts no connection by itself.
+     */
+    val knownScannerToReconnect: ScannerDevice?
+        get() = knownDevice?.takeIf { !connectionState.isConnected && reconnectTarget == null }
+
+    /**
+     * Says that waiting will not bring the known scanner back: shown under its
+     * Reconnect button while automatic reconnect is paused (#137).
+     */
+    val showsReconnectPausedHint: Boolean
+        get() = automaticReconnectPaused && knownScannerToReconnect != null
+
+    /** False only while that scanner is already being connected. */
+    val canReconnectKnownScanner: Boolean
+        get() = knownScannerToReconnect?.let { it.id != connectingDevice?.id } ?: false
 
     /** The device a connection attempt is currently in flight for, if any. */
     val connectingDevice: ScannerDevice?
@@ -175,6 +224,24 @@ data class SettingsUiState(
     val successSound: SuccessSound get() = settings.successSound
     val failureSound: FailureSound get() = settings.failureSound
     val language: AppLanguage get() = settings.language
+}
+
+/**
+ * The selection after the scanner moved from [previous] to [current] (#137).
+ *
+ * A newly connected scanner becomes the selection, so Connect, Reconnect and
+ * Retry follow a switch the adapter made on its own: after the automatic GATT
+ * mode switch the scanner returns under a new identity, and the identity the
+ * operator picked no longer exists. While the same scanner stays connected the
+ * operator's selection is left alone, so another row can still be chosen.
+ */
+fun selectedDeviceIdAfterConnectionChange(
+    selectedDeviceId: String?,
+    previous: ConnectionState,
+    current: ConnectionState,
+): String? {
+    val connected = current.connectedDevice ?: return selectedDeviceId
+    return if (previous.connectedDevice?.id == connected.id) selectedDeviceId else connected.id
 }
 
 /** One-way intents emitted by the stateless settings UI. */

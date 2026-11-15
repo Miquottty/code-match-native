@@ -75,9 +75,16 @@ class BleConnectionCoordinator(
     private val payloadGate = BleScanPayloadGate(nowMillis = nowMillis)
     private var knownDeviceReadResult: BleKnownDeviceReadResult =
         BleKnownDeviceReadResult.Missing
+    /** The operator disconnected and has not connected a scanner since. */
+    private var operatorDisconnected = false
 
     init {
         preferredDevice = readKnownDevice()
+        // Restored with the identity: a process restart must not undo the
+        // operator's Disconnect by reconnecting the known scanner.
+        operatorDisconnected = runCatching {
+            knownDeviceStore?.readOperatorDisconnected() == true
+        }.getOrDefault(false)
     }
 
     val state: BleScannerState get() = mutableState
@@ -121,6 +128,43 @@ class BleConnectionCoordinator(
     /** The device of a requested connection that is not established yet. */
     val connectingDevice: ScannerDevice?
         get() = pendingConnectDevice
+
+    /**
+     * True from the operator's Disconnect until the operator connects again.
+     * While it is set no automatic reconnect is scheduled or started; the
+     * known device is kept, so an explicit reconnect still targets it.
+     */
+    val isOperatorDisconnected: Boolean
+        get() = operatorDisconnected
+
+    /**
+     * Record the operator's Disconnect ([disconnected] = true) or the
+     * operator's next connect/reconnect request (false). The flag is persisted
+     * next to the known device so it survives a process restart. Setting it
+     * drops a scheduled automatic reconnect. Returns false only when the
+     * changed value could not be persisted; it still applies to this process.
+     */
+    fun setOperatorDisconnected(disconnected: Boolean): Boolean {
+        if (disconnected) {
+            reconnectAtMillis = null
+            reconnectAttempt = 0
+        }
+        if (operatorDisconnected == disconnected) return true
+        operatorDisconnected = disconnected
+        val saved = runCatching {
+            knownDeviceStore?.saveOperatorDisconnected(disconnected) ?: true
+        }.getOrDefault(false)
+        diagnostics.connection(
+            if (disconnected) {
+                "Automatic reconnect paused: the operator disconnected the scanner"
+            } else {
+                "Automatic reconnect resumed: the operator requested a connection"
+            },
+        )
+        if (!saved) diagnostics.error("Operator disconnect state could not be saved")
+        emitState()
+        return saved
+    }
 
     fun setListener(listener: BleScannerListener?) {
         this.listener = listener
@@ -698,6 +742,11 @@ class BleConnectionCoordinator(
         }
 
         val dueAt = reconnectAtMillis ?: return false
+        if (operatorDisconnected) {
+            // The operator's Disconnect outlives any reconnect armed before it.
+            reconnectAtMillis = null
+            return false
+        }
         if (!applicationActive || nowMillis < dueAt) return false
         // Adapter-originated discovery may bypass startDiscovery(). Keep the
         // deadline pending until discovery ends rather than overlapping it.
@@ -1006,6 +1055,8 @@ class BleConnectionCoordinator(
 
     private fun scheduleReconnect(nowMillis: Long) {
         if (!applicationActive || manualDisconnect || preferredDevice == null) return
+        // After the operator's Disconnect only the operator connects again.
+        if (operatorDisconnected) return
         if (reconnectAtMillis != null) return
         val delay = if (reconnectAttempt >= maxReconnectAttempts) {
             // Only disconnected devices enter slow recovery. Failed physical

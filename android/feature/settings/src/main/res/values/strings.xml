@@ -56,6 +56,8 @@
     <string name="settings_connect">接続</string>
     <string name="settings_disconnect">切断</string>
     <string name="settings_reconnect">再接続</string>
+    <string name="settings_reconnect_known_scanner">以前接続したスキャナに再接続</string>
+    <string name="settings_reconnect_paused_hint">このスキャナには自動で再接続しません。使うときは上のボタンを押してください。</string>
     <string name="settings_device_selected">選択中</string>
     <string name="settings_device_not_selected">未選択</string>
     <string name="settings_status_idle">未接続</string>
@@ -86,6 +88,7 @@
     <string name="settings_scanner_reselect_title">スキャナを選び直してください</string>
     <string name="settings_scanner_reselect_description">スキャナをGATTモードへ切り替えました。「スキャナを検索」で表示されたスキャナを選んで接続してください。</string>
     <string name="settings_connect_rejected">接続を開始できませんでした。接続中のスキャナがある場合は先に「切断」してから、もう一度お試しください。</string>
+    <string name="settings_disconnect_first_hint">別のスキャナに接続するには、先に「切断」を押してください。</string>
     <string name="settings_scanner_retry">もう一度試す</string>
     <string name="settings_scanner_open_settings">Bluetooth設定</string>
 

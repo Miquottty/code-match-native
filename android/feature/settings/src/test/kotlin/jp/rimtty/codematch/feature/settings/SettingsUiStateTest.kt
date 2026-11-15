@@ -64,6 +64,186 @@ class SettingsUiStateTest {
     }
 
     @Test
+    fun disconnectFirstHintShowsOnlyWhileAnotherScannerThanTheSelectionIsConnected() {
+        val first = ScannerDevice(id = "first", name = "First")
+        val second = ScannerDevice(id = "second", name = "Second")
+        val connectedToFirst = SettingsUiState(
+            devices = listOf(first, second),
+            connectionState = ConnectionState.Connected(first),
+        )
+        // Nothing selected, or the connected scanner itself is selected.
+        assertFalse(connectedToFirst.showsDisconnectFirstHint)
+        assertFalse(connectedToFirst.copy(selectedDeviceId = first.id).showsDisconnectFirstHint)
+        // A selection that is not listed any more is not a target.
+        assertFalse(connectedToFirst.copy(selectedDeviceId = "gone").showsDisconnectFirstHint)
+        // A different scanner is selected: the link has to be closed first.
+        assertTrue(connectedToFirst.copy(selectedDeviceId = second.id).showsDisconnectFirstHint)
+
+        // Nothing is connected: the selection can simply be connected.
+        listOf(
+            ConnectionState.Idle,
+            ConnectionState.Searching,
+            ConnectionState.Connecting(first),
+            ConnectionState.Failed("lost"),
+            ConnectionState.Unavailable("Bluetooth is off"),
+        ).forEach { connection ->
+            assertFalse(
+                connectedToFirst
+                    .copy(selectedDeviceId = second.id, connectionState = connection)
+                    .showsDisconnectFirstHint,
+            )
+        }
+    }
+
+    @Test
+    fun reconnectPausedHintFollowsTheKnownScannerButton() {
+        val known = ScannerDevice(id = "known", name = "HPRT-4F5F")
+        // The operator disconnected: the scanner stays known, nothing
+        // reconnects by itself, and the screen says so under the button.
+        val paused = SettingsUiState(knownDevice = known, automaticReconnectPaused = true)
+        assertTrue(paused.showsReconnectPausedHint)
+        assertTrue(paused.copy(connectionState = ConnectionState.Searching).showsReconnectPausedHint)
+
+        // Not paused (e.g. the link dropped and a reconnect is being tried).
+        assertFalse(paused.copy(automaticReconnectPaused = false).showsReconnectPausedHint)
+        // No button, no hint: nothing remembered, connected, or a selection
+        // that Connect/Reconnect would target instead.
+        assertFalse(paused.copy(knownDevice = null).showsReconnectPausedHint)
+        assertFalse(
+            paused.copy(devices = listOf(known), connectionState = ConnectionState.Connected(known))
+                .showsReconnectPausedHint,
+        )
+        assertFalse(
+            paused.copy(devices = listOf(known), selectedDeviceId = known.id).showsReconnectPausedHint,
+        )
+    }
+
+    @Test
+    fun knownScannerIsOfferedOnlyWhileNothingIsConnectedOrSelected() {
+        val known = ScannerDevice(id = "known", name = "HPRT-4F5F")
+        val other = ScannerDevice(id = "other", name = "HPRT-636E")
+
+        // After a restart: nothing listed, nothing selected.
+        val restarted = SettingsUiState(knownDevice = known)
+        assertEquals(known, restarted.knownScannerToReconnect)
+        assertTrue(restarted.canReconnectKnownScanner)
+        // Reconnect then falls back to the adapter's known device.
+        assertEquals(null, restarted.reconnectTarget)
+
+        // Still offered while searching, after a failure, or with a list but
+        // no selection (also a selection that is not listed any more).
+        listOf(
+            restarted.copy(connectionState = ConnectionState.Searching),
+            restarted.copy(connectionState = ConnectionState.Failed("lost")),
+            restarted.copy(connectionState = ConnectionState.Unavailable("Bluetooth is off")),
+            restarted.copy(devices = listOf(known, other)),
+            restarted.copy(devices = listOf(other), selectedDeviceId = "gone"),
+        ).forEach { state ->
+            assertEquals(known, state.knownScannerToReconnect)
+            assertTrue(state.canReconnectKnownScanner)
+        }
+
+        // Already connecting it: shown, but a second tap is not offered.
+        val connecting = restarted.copy(
+            devices = listOf(known),
+            connectionState = ConnectionState.Connecting(known),
+        )
+        assertEquals(known, connecting.knownScannerToReconnect)
+        assertFalse(connecting.canReconnectKnownScanner)
+        // Connecting another scanner does not disable it.
+        assertTrue(
+            restarted.copy(connectionState = ConnectionState.Connecting(other))
+                .canReconnectKnownScanner,
+        )
+
+        // A selection owns Connect/Reconnect; a connected scanner needs neither.
+        assertEquals(
+            null,
+            restarted.copy(devices = listOf(known, other), selectedDeviceId = other.id)
+                .knownScannerToReconnect,
+        )
+        assertEquals(
+            null,
+            restarted.copy(devices = listOf(known), selectedDeviceId = known.id)
+                .knownScannerToReconnect,
+        )
+        val connected = restarted.copy(connectionState = ConnectionState.Connected(known))
+        assertEquals(null, connected.knownScannerToReconnect)
+        assertFalse(connected.canReconnectKnownScanner)
+
+        // No remembered scanner (never connected, or forgotten after a GATT
+        // mode switch): nothing is offered.
+        assertEquals(null, SettingsUiState().knownScannerToReconnect)
+        assertFalse(SettingsUiState().canReconnectKnownScanner)
+        assertEquals(
+            null,
+            SettingsUiState(
+                connectionState = ConnectionState.Failed(
+                    jp.rimtty.codematch.scanner.api.ScannerFailureReasons.RESELECT_AFTER_GATT_SWITCH,
+                ),
+            ).knownScannerToReconnect,
+        )
+    }
+
+    @Test
+    fun newlyConnectedScannerBecomesTheSelection() {
+        val origin = ScannerDevice(id = "origin", name = "Hyper 160B-4F5F-UNI")
+        val successor = ScannerDevice(id = "successor", name = "HPRT-4F5F")
+        val other = ScannerDevice(id = "other", name = "HPRT-636E")
+
+        // The GATT switch connects the scanner under another identity.
+        assertEquals(
+            successor.id,
+            selectedDeviceIdAfterConnectionChange(
+                selectedDeviceId = origin.id,
+                previous = ConnectionState.Connecting(successor),
+                current = ConnectionState.Connected(successor),
+            ),
+        )
+        // The known scanner connected on its own: it becomes the selection.
+        assertEquals(
+            successor.id,
+            selectedDeviceIdAfterConnectionChange(null, ConnectionState.Idle, ConnectionState.Connected(successor)),
+        )
+        // A link replaced without a state in between still follows the scanner.
+        assertEquals(
+            successor.id,
+            selectedDeviceIdAfterConnectionChange(
+                origin.id,
+                ConnectionState.Connected(origin),
+                ConnectionState.Connected(successor),
+            ),
+        )
+        // While the same scanner stays connected the operator may select
+        // another row; that choice is kept.
+        assertEquals(
+            other.id,
+            selectedDeviceIdAfterConnectionChange(
+                other.id,
+                ConnectionState.Connected(successor),
+                ConnectionState.Connected(successor),
+            ),
+        )
+        // No connection: the selection never changes.
+        listOf(
+            ConnectionState.Idle,
+            ConnectionState.Searching,
+            ConnectionState.Connecting(successor),
+            ConnectionState.Failed("lost"),
+            ConnectionState.Unavailable("Bluetooth is off"),
+        ).forEach { current ->
+            assertEquals(
+                origin.id,
+                selectedDeviceIdAfterConnectionChange(
+                    origin.id,
+                    ConnectionState.Connected(successor),
+                    current,
+                ),
+            )
+        }
+    }
+
+    @Test
     fun unresolvedGattSwitchAsksForReselection() {
         val state = SettingsUiState(
             connectionState = ConnectionState.Failed(
