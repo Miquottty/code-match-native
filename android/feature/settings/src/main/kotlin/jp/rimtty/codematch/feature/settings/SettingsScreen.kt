@@ -44,6 +44,7 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.VolumeUp
+import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -374,10 +375,12 @@ private fun ScanLogCard(
 
 @Composable
 private fun ScannerSetupGuide(onClose: () -> Unit) {
-    val setupCodes = BluetoothScannerSetupCode.entries
-    var currentStep by rememberSaveable { mutableStateOf(0) }
-    var enlargedCode by remember { mutableStateOf<BluetoothScannerSetupCode?>(null) }
-    val currentCode = setupCodes[currentStep]
+    // The guide walks the six protocol steps, not the four distinct codes:
+    // EnterSet and ExitSave are each read twice.
+    val setupSteps = BluetoothScannerSetupStep.entries
+    var currentIndex by rememberSaveable { mutableStateOf(0) }
+    var enlargedStep by remember { mutableStateOf<BluetoothScannerSetupStep?>(null) }
+    val currentStep = setupSteps[currentIndex]
 
     Card(
         modifier = Modifier
@@ -415,40 +418,39 @@ private fun ScannerSetupGuide(onClose: () -> Unit) {
                     Text(stringResource(R.string.settings_setup_guide_close))
                 }
             }
+            if (currentIndex == 0) {
+                // Shown once, above the first step: the operator must know
+                // about the factory reset before reading any code.
+                SetupResetCaution()
+            }
             Text(
                 text = stringResource(
                     R.string.settings_setup_progress,
-                    currentStep + 1,
-                    setupCodes.size,
+                    currentIndex + 1,
+                    setupSteps.size,
                 ),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.semantics { heading() },
             )
             SetupCodeStep(
-                code = currentCode,
-                number = currentStep + 1,
-                title = setupCodeTitle(currentCode),
-                description = stringResource(setupCodeDescription(currentCode)),
-                guidance = stringResource(setupCodeGuidance(currentCode)),
-                onEnlarge = { enlargedCode = currentCode },
-                modifier = Modifier.testTag(
-                    when (currentStep) {
-                        0 -> SettingsTestTags.SETUP_GUIDE_STEP_1
-                        1 -> SettingsTestTags.SETUP_GUIDE_STEP_2
-                        else -> SettingsTestTags.SETUP_GUIDE_STEP_3
-                    },
-                ),
+                step = currentStep,
+                number = currentIndex + 1,
+                title = setupStepTitle(currentStep),
+                description = stringResource(setupStepDescription(currentStep)),
+                guidance = stringResource(setupStepGuidance(currentStep)),
+                onEnlarge = { enlargedStep = currentStep },
+                modifier = Modifier.testTag(SettingsTestTags.setupGuideStep(currentStep)),
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (currentStep > 0) {
+                if (currentIndex > 0) {
                     OutlinedButton(
                         onClick = {
-                            enlargedCode = null
-                            currentStep -= 1
+                            enlargedStep = null
+                            currentIndex -= 1
                         },
                         modifier = Modifier
                             .weight(1f)
@@ -460,11 +462,11 @@ private fun ScannerSetupGuide(onClose: () -> Unit) {
                 }
                 Button(
                     onClick = {
-                        enlargedCode = null
-                        if (currentStep == setupCodes.lastIndex) {
+                        enlargedStep = null
+                        if (currentIndex == setupSteps.lastIndex) {
                             onClose()
                         } else {
-                            currentStep += 1
+                            currentIndex += 1
                         }
                     },
                     modifier = Modifier
@@ -474,7 +476,7 @@ private fun ScannerSetupGuide(onClose: () -> Unit) {
                 ) {
                     Text(
                         stringResource(
-                            if (currentStep == setupCodes.lastIndex) {
+                            if (currentIndex == setupSteps.lastIndex) {
                                 R.string.settings_setup_finish
                             } else {
                                 R.string.settings_setup_next
@@ -486,30 +488,81 @@ private fun ScannerSetupGuide(onClose: () -> Unit) {
         }
     }
 
-    enlargedCode?.let { code ->
+    enlargedStep?.let { step ->
         FullscreenScannerSetupBarcode(
-            code = code,
-            title = setupCodeTitle(code),
-            onDismiss = { enlargedCode = null },
+            step = step,
+            title = setupStepTitle(step),
+            onDismiss = { enlargedStep = null },
         )
     }
 }
 
-private fun setupCodeDescription(code: BluetoothScannerSetupCode): Int = when (code) {
-    BluetoothScannerSetupCode.ENTER_SETUP -> R.string.settings_setup_step_1_description
-    BluetoothScannerSetupCode.GATT_MODE -> R.string.settings_setup_step_2_description
-    BluetoothScannerSetupCode.SAVE_AND_EXIT -> R.string.settings_setup_step_3_description
+/**
+ * Warns that the guide restores the scanner's factory settings, and what to do
+ * when a scanner paired with this device earlier no longer connects.
+ */
+@Composable
+private fun SetupResetCaution() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                MaterialTheme.colorScheme.surface,
+                MaterialTheme.shapes.small,
+            )
+            .padding(12.dp)
+            .testTag(SettingsTestTags.SETUP_RESET_CAUTION),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Warning,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = stringResource(R.string.settings_setup_reset_caution),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+    }
 }
 
-private fun setupCodeGuidance(code: BluetoothScannerSetupCode): Int = when (code) {
-    BluetoothScannerSetupCode.ENTER_SETUP -> R.string.settings_setup_step_1_guidance
-    BluetoothScannerSetupCode.GATT_MODE -> R.string.settings_setup_step_2_guidance
-    BluetoothScannerSetupCode.SAVE_AND_EXIT -> R.string.settings_setup_step_3_guidance
+private fun setupStepDescription(step: BluetoothScannerSetupStep): Int = when (step) {
+    BluetoothScannerSetupStep.ENTER_SETUP ->
+        R.string.settings_setup_step_enter_setup_description
+    BluetoothScannerSetupStep.FACTORY_RESET ->
+        R.string.settings_setup_step_factory_reset_description
+    BluetoothScannerSetupStep.SAVE_FACTORY_RESET ->
+        R.string.settings_setup_step_save_factory_reset_description
+    BluetoothScannerSetupStep.ENTER_SETUP_AGAIN ->
+        R.string.settings_setup_step_enter_setup_again_description
+    BluetoothScannerSetupStep.GATT_MODE ->
+        R.string.settings_setup_step_gatt_mode_description
+    BluetoothScannerSetupStep.SAVE_AND_EXIT ->
+        R.string.settings_setup_step_save_and_exit_description
+}
+
+private fun setupStepGuidance(step: BluetoothScannerSetupStep): Int = when (step) {
+    BluetoothScannerSetupStep.ENTER_SETUP ->
+        R.string.settings_setup_step_enter_setup_guidance
+    BluetoothScannerSetupStep.FACTORY_RESET ->
+        R.string.settings_setup_step_factory_reset_guidance
+    BluetoothScannerSetupStep.SAVE_FACTORY_RESET ->
+        R.string.settings_setup_step_save_factory_reset_guidance
+    BluetoothScannerSetupStep.ENTER_SETUP_AGAIN ->
+        R.string.settings_setup_step_enter_setup_again_guidance
+    BluetoothScannerSetupStep.GATT_MODE ->
+        R.string.settings_setup_step_gatt_mode_guidance
+    BluetoothScannerSetupStep.SAVE_AND_EXIT ->
+        R.string.settings_setup_step_save_and_exit_guidance
 }
 
 @Composable
 private fun SetupCodeStep(
-    code: BluetoothScannerSetupCode,
+    step: BluetoothScannerSetupStep,
     number: Int,
     title: String,
     description: String,
@@ -562,7 +615,7 @@ private fun SetupCodeStep(
             style = MaterialTheme.typography.bodySmall,
         )
         Code128SetupBarcode(
-            code = code,
+            step = step,
             title = title,
         )
         OutlinedButton(
@@ -570,36 +623,42 @@ private fun SetupCodeStep(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
-                .testTag(SettingsTestTags.setupEnlarge(code)),
+                .testTag(SettingsTestTags.setupEnlarge(step)),
         ) {
             Icon(Icons.Outlined.Fullscreen, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text(stringResource(R.string.settings_setup_enlarge))
         }
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    MaterialTheme.colorScheme.surface,
-                    MaterialTheme.shapes.small,
-                )
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.settings_setup_scanner_display_label),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = code.scannerDisplayText,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+        // No display text has been confirmed for the factory reset, so the
+        // hint is hidden there rather than showing an invented one.
+        val scannerDisplayText = step.code.scannerDisplayText
+        if (scannerDisplayText.isNotEmpty()) {
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .semantics { contentDescription = code.scannerDisplayText },
-            )
+                    .background(
+                        MaterialTheme.colorScheme.surface,
+                        MaterialTheme.shapes.small,
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .testTag(SettingsTestTags.SETUP_SCANNER_DISPLAY),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.settings_setup_scanner_display_label),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = scannerDisplayText,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentDescription = scannerDisplayText },
+                )
+            }
         }
         Text(
             text = guidance,
@@ -629,11 +688,11 @@ private fun SetupCodeStep(
  */
 @Composable
 fun Code128SetupBarcode(
-    code: BluetoothScannerSetupCode,
+    step: BluetoothScannerSetupStep,
     title: String,
     modifier: Modifier = Modifier,
 ) {
-    val barcode = remember(code) { Code128Encoder.encode(code) }
+    val barcode = remember(step) { Code128Encoder.encode(step) }
     val accessibilityLabel = stringResource(
         R.string.settings_setup_barcode_accessibility,
         title,
@@ -671,7 +730,7 @@ fun Code128SetupBarcode(
                 barcode = barcode,
                 modifier = Modifier
                     .size(targetWidth, targetHeight)
-                    .testTag(SettingsTestTags.setupBarcode(code)),
+                    .testTag(SettingsTestTags.setupBarcode(step)),
             )
         }
     }
@@ -749,11 +808,11 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBlackRun(
 
 @Composable
 private fun FullscreenScannerSetupBarcode(
-    code: BluetoothScannerSetupCode,
+    step: BluetoothScannerSetupStep,
     title: String,
     onDismiss: () -> Unit,
 ) {
-    val barcode = remember(code) { Code128Encoder.encode(code) }
+    val barcode = remember(step) { Code128Encoder.encode(step) }
     val accessibilityLabel = stringResource(
         R.string.settings_setup_barcode_accessibility,
         title,
@@ -782,7 +841,7 @@ private fun FullscreenScannerSetupBarcode(
                         .semantics {
                             contentDescription = accessibilityLabel
                         }
-                        .testTag(SettingsTestTags.setupFullscreenBarcode(code)),
+                        .testTag(SettingsTestTags.setupFullscreenBarcode(step)),
                 )
                 Column(
                     modifier = Modifier
@@ -830,11 +889,20 @@ private fun FullscreenScannerSetupBarcode(
 }
 
 @Composable
-private fun setupCodeTitle(code: BluetoothScannerSetupCode): String = stringResource(
-    when (code) {
-        BluetoothScannerSetupCode.ENTER_SETUP -> R.string.settings_setup_step_1_title
-        BluetoothScannerSetupCode.GATT_MODE -> R.string.settings_setup_step_2_title
-        BluetoothScannerSetupCode.SAVE_AND_EXIT -> R.string.settings_setup_step_3_title
+private fun setupStepTitle(step: BluetoothScannerSetupStep): String = stringResource(
+    when (step) {
+        BluetoothScannerSetupStep.ENTER_SETUP ->
+            R.string.settings_setup_step_enter_setup_title
+        BluetoothScannerSetupStep.FACTORY_RESET ->
+            R.string.settings_setup_step_factory_reset_title
+        BluetoothScannerSetupStep.SAVE_FACTORY_RESET ->
+            R.string.settings_setup_step_save_factory_reset_title
+        BluetoothScannerSetupStep.ENTER_SETUP_AGAIN ->
+            R.string.settings_setup_step_enter_setup_again_title
+        BluetoothScannerSetupStep.GATT_MODE ->
+            R.string.settings_setup_step_gatt_mode_title
+        BluetoothScannerSetupStep.SAVE_AND_EXIT ->
+            R.string.settings_setup_step_save_and_exit_title
     },
 )
 

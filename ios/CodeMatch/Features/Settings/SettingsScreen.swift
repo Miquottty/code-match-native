@@ -2,34 +2,64 @@ import SwiftUI
 import CoreImage.CIFilterBuiltins
 import UIKit
 
+/// The distinct Code 128 setup barcodes of the Inateck scanners. The order in which they are
+/// read is `BluetoothScannerSetupStep`; a code can appear there more than once.
 enum BluetoothScannerSetupCode: String, CaseIterable, Identifiable {
     case enterSetup = "/*EnterSet*/"
+    case factoryReset = "/*SetFun00*/"
     case gattMode = "/*BLE_GATT*/"
     case saveAndExit = "/*ExitSave*/"
 
     var id: String { rawValue }
+}
 
-    var accessibilityID: String {
+/// The pages of the first-connection guide, one setup barcode each, in the order the operator
+/// reads them. The raw value is the step id shared with the Android app and used in the
+/// accessibility identifiers.
+///
+/// The order is the scanner's setup protocol, verified on a BCST-36 on 2026-11-15, and must not
+/// be changed: the factory reset has to be saved and setup mode entered again before
+/// `/*BLE_GATT*/` is read, because reading it directly after the reset does not switch the mode.
+enum BluetoothScannerSetupStep: String, CaseIterable, Identifiable {
+    case enterSetup
+    case factoryReset
+    case saveFactoryReset
+    case enterSetupAgain
+    case gattMode
+    case saveAndExit
+
+    var id: String { rawValue }
+
+    var accessibilityID: String { rawValue }
+
+    var code: BluetoothScannerSetupCode {
         switch self {
-        case .enterSetup: "enterSetup"
-        case .gattMode: "gattMode"
-        case .saveAndExit: "saveAndExit"
+        case .enterSetup, .enterSetupAgain: .enterSetup
+        case .factoryReset: .factoryReset
+        case .gattMode: .gattMode
+        case .saveFactoryReset, .saveAndExit: .saveAndExit
         }
     }
 
     var title: String {
         switch self {
         case .enterSetup: AppLocalization.string("設定を開始")
+        case .factoryReset: AppLocalization.string("工場出荷時の設定に戻す")
+        case .saveFactoryReset: AppLocalization.string("初期化を保存して終了")
+        case .enterSetupAgain: AppLocalization.string("もう一度、設定を開始")
         case .gattMode: AppLocalization.string("GATTモードへ切り替え")
         case .saveAndExit: AppLocalization.string("設定を保存して終了")
         }
     }
 
-    var scannerDisplayText: String {
+    /// What the scanner's own display shows after the code is read; `nil` where it has not
+    /// been confirmed on a device, which hides the hint on that page.
+    var scannerDisplayText: String? {
         switch self {
-        case .enterSetup: AppLocalization.string("Enter Setup")
+        case .enterSetup, .enterSetupAgain: AppLocalization.string("Enter Setup")
+        case .factoryReset: nil
         case .gattMode: AppLocalization.string("BLE_GATT")
-        case .saveAndExit: AppLocalization.string("Exit / Save")
+        case .saveFactoryReset, .saveAndExit: AppLocalization.string("Exit / Save")
         }
     }
 
@@ -37,7 +67,19 @@ enum BluetoothScannerSetupCode: String, CaseIterable, Identifiable {
         switch self {
         case .enterSetup:
             AppLocalization.string(
-                "このコードは設定受付を開始するためのものです。ここではまだGATTモードには切り替わりません。次の画面でGATTを指定します。"
+                "このコードは設定受付を開始するためのものです。次の画面でスキャナを工場出荷時の設定に戻します。"
+            )
+        case .factoryReset:
+            AppLocalization.string(
+                "以前の設定の影響をなくすため、スキャナを工場出荷時の設定に戻します。スキャナに保存していた設定は消えます。"
+            )
+        case .saveFactoryReset:
+            AppLocalization.string(
+                "初期化を保存して、設定モードをいったん終了します。まだGATTモードには切り替わっていません。"
+            )
+        case .enterSetupAgain:
+            AppLocalization.string(
+                "GATTモードを指定するために、もう一度設定受付を開始します。次の画面でGATTを指定します。"
             )
         case .gattMode:
             AppLocalization.string(
@@ -831,9 +873,10 @@ private struct BluetoothScannerSetupGuide: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var step = 0
-    @State private var enlargedCode: BluetoothScannerSetupCode?
+    @State private var enlargedStep: BluetoothScannerSetupStep?
 
-    private let stepCount = 5
+    /// Intro page, one page per setup step, final page.
+    private let stepCount = BluetoothScannerSetupStep.allCases.count + 2
 
     var body: some View {
         NavigationStack {
@@ -911,15 +954,20 @@ private struct BluetoothScannerSetupGuide: View {
         .preferredColorScheme(.light)
         .presentationDetents([.large])
         .accessibilityIdentifier("scannerSetupGuide")
-        .fullScreenCover(item: $enlargedCode) { code in
-            FullscreenScannerSetupBarcode(code: code)
+        .fullScreenCover(item: $enlargedStep) { setupStep in
+            FullscreenScannerSetupBarcode(step: setupStep)
         }
+    }
+
+    /// The setup step shown on guide page `step`; `nil` on the intro and final pages.
+    private var currentSetupStep: BluetoothScannerSetupStep? {
+        let steps = BluetoothScannerSetupStep.allCases
+        return steps.indices.contains(step - 1) ? steps[step - 1] : nil
     }
 
     @ViewBuilder
     private var guideContent: some View {
-        switch step {
-        case 0:
+        if step == 0 {
             VStack(spacing: 18) {
                 Image(systemName: "barcode.viewfinder")
                     .font(.system(size: 64, weight: .medium))
@@ -935,18 +983,24 @@ private struct BluetoothScannerSetupGuide: View {
                         text: AppLocalization.string("iPhoneの設定アプリではペアリングせず、このガイドを進めます")
                     )
                 }
-                Text("次の3画面に表示されるコードを、上から順に1回ずつ読み取ってください。")
+                Text("次の6画面に表示されるコードを、順番どおりに1回ずつ読み取ってください。")
                     .font(.subheadline)
                     .foregroundStyle(AppTheme.muted)
                     .multilineTextAlignment(.center)
+                Label(
+                    "この手順はスキャナを工場出荷時の設定に戻します。以前このiPhoneとペアリングしたスキャナで接続できないときは、設定アプリのBluetoothで登録を解除してからやり直してください。",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(AppTheme.amber)
+                .padding(14)
+                .background(AppTheme.amber.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
             }
-        case 1:
-            setupCodePage(.enterSetup)
-        case 2:
-            setupCodePage(.gattMode)
-        case 3:
-            setupCodePage(.saveAndExit)
-        default:
+        } else if let setupStep = currentSetupStep {
+            // Two pages can show the same barcode, so each page keeps its own identity.
+            setupCodePage(setupStep)
+                .id(setupStep)
+        } else {
             VStack(spacing: 18) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 68))
@@ -985,42 +1039,42 @@ private struct BluetoothScannerSetupGuide: View {
         }
     }
 
-    private func setupCodePage(_ code: BluetoothScannerSetupCode) -> some View {
-        VStack(spacing: 18) {
-            Text(code.title)
+    private func setupCodePage(_ setupStep: BluetoothScannerSetupStep) -> some View {
+        let guidanceColor = guidanceColor(for: setupStep)
+        return VStack(spacing: 18) {
+            Text(setupStep.title)
                 .font(.title2.weight(.bold))
                 .foregroundStyle(AppTheme.ink)
             Text("BCST-47で下のコードを1回読み取ります")
                 .font(.subheadline)
                 .foregroundStyle(AppTheme.muted)
-            Code128SetupBarcode(code: code)
+            Code128SetupBarcode(step: setupStep)
             Button {
-                enlargedCode = code
+                enlargedStep = setupStep
             } label: {
                 Label("全画面で大きく表示", systemImage: "arrow.up.left.and.arrow.down.right")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .tint(AppTheme.ink)
-            .accessibilityIdentifier("scannerSetupEnlarge_\(code.accessibilityID)")
-            VStack(spacing: 5) {
-                Text("スキャナ表示の目安")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(AppTheme.muted)
-                Text(code.scannerDisplayText)
-                    .font(.system(.headline, design: .monospaced, weight: .bold))
-                    .foregroundStyle(AppTheme.green)
+            .accessibilityIdentifier("scannerSetupEnlarge_\(setupStep.accessibilityID)")
+            if let scannerDisplayText = setupStep.scannerDisplayText {
+                VStack(spacing: 5) {
+                    Text("スキャナ表示の目安")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(AppTheme.muted)
+                    Text(scannerDisplayText)
+                        .font(.system(.headline, design: .monospaced, weight: .bold))
+                        .foregroundStyle(AppTheme.green)
+                }
             }
-            Label(code.resultGuidance, systemImage: guidanceIcon(for: code))
+            Label(setupStep.resultGuidance, systemImage: guidanceIcon(for: setupStep))
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(code == .enterSetup ? AppTheme.amber : AppTheme.green)
+                .foregroundStyle(guidanceColor)
                 .multilineTextAlignment(.leading)
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    (code == .enterSetup ? AppTheme.amber : AppTheme.green).opacity(0.08),
-                    in: RoundedRectangle(cornerRadius: 12)
-                )
+                .background(guidanceColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
             Text("読取音または成功表示を確認してから「読み取りました・次へ」を押してください。")
                 .font(.caption)
                 .foregroundStyle(AppTheme.muted)
@@ -1029,21 +1083,31 @@ private struct BluetoothScannerSetupGuide: View {
         }
     }
 
-    private func guidanceIcon(for code: BluetoothScannerSetupCode) -> String {
-        switch code {
-        case .enterSetup: "info.circle.fill"
+    private func guidanceIcon(for setupStep: BluetoothScannerSetupStep) -> String {
+        switch setupStep {
+        case .enterSetup, .enterSetupAgain: "info.circle.fill"
+        case .factoryReset: "arrow.counterclockwise.circle.fill"
         case .gattMode: "antenna.radiowaves.left.and.right"
-        case .saveAndExit: "checkmark.seal.fill"
+        case .saveFactoryReset, .saveAndExit: "checkmark.seal.fill"
+        }
+    }
+
+    /// Amber where the scanner is not in its final state yet and the operator must keep going
+    /// (entering setup, erasing the stored settings); green for the other steps.
+    private func guidanceColor(for setupStep: BluetoothScannerSetupStep) -> Color {
+        switch setupStep {
+        case .enterSetup, .factoryReset, .enterSetupAgain: AppTheme.amber
+        case .saveFactoryReset, .gattMode, .saveAndExit: AppTheme.green
         }
     }
 }
 
 private struct Code128SetupBarcode: View {
-    let code: BluetoothScannerSetupCode
+    let step: BluetoothScannerSetupStep
 
     var body: some View {
         Group {
-            if let image = Self.makeImage(payload: code.rawValue) {
+            if let image = Self.makeImage(payload: step.code.rawValue) {
                 Image(uiImage: image)
                     .resizable()
                     .interpolation(.none)
@@ -1063,8 +1127,8 @@ private struct Code128SetupBarcode: View {
                 .stroke(AppTheme.line, lineWidth: 1)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(AppLocalization.string("\(code.title)のCode 128設定コード"))
-        .accessibilityIdentifier("scannerSetupBarcode_\(code.accessibilityID)")
+        .accessibilityLabel(AppLocalization.string("\(step.title)のCode 128設定コード"))
+        .accessibilityIdentifier("scannerSetupBarcode_\(step.accessibilityID)")
     }
 
     fileprivate static func makeImage(payload: String) -> UIImage? {
@@ -1084,7 +1148,7 @@ private struct Code128SetupBarcode: View {
 }
 
 private struct FullscreenScannerSetupBarcode: View {
-    let code: BluetoothScannerSetupCode
+    let step: BluetoothScannerSetupStep
 
     @Environment(\.dismiss) private var dismiss
 
@@ -1096,14 +1160,14 @@ private struct FullscreenScannerSetupBarcode: View {
             Color.white
                 .ignoresSafeArea()
                 .overlay {
-                    if let image = Code128SetupBarcode.makeImage(payload: code.rawValue) {
+                    if let image = Code128SetupBarcode.makeImage(payload: step.code.rawValue) {
                         Image(uiImage: image)
                             .resizable()
                             .interpolation(.none)
                             .scaledToFit()
                             .frame(width: barcodeWidth, height: barcodeHeight)
                             .rotationEffect(.degrees(90))
-                            .accessibilityIdentifier("scannerSetupFullscreenBarcode_\(code.accessibilityID)")
+                            .accessibilityIdentifier("scannerSetupFullscreenBarcode_\(step.accessibilityID)")
                     } else {
                         Label("設定コードを表示できません", systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(AppTheme.red)
@@ -1111,7 +1175,7 @@ private struct FullscreenScannerSetupBarcode: View {
                 }
                 .overlay(alignment: .top) {
                     VStack(spacing: 5) {
-                        Text(code.title)
+                        Text(step.title)
                             .font(.headline.weight(.bold))
                             .foregroundStyle(AppTheme.ink)
                         Text("iPhoneを横向きにして、画面全体のコードを読み取ります")

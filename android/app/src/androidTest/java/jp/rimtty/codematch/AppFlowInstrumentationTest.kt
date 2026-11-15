@@ -30,6 +30,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dagger.hilt.android.EntryPointAccessors
 import jp.rimtty.codematch.di.DebugAppTestEntryPoint
 import jp.rimtty.codematch.feature.history.HistoryTestTags
+import jp.rimtty.codematch.feature.settings.BluetoothScannerSetupStep
 import jp.rimtty.codematch.feature.settings.SettingsTestTags
 import jp.rimtty.codematch.core.model.AppLanguage
 import jp.rimtty.codematch.core.model.AppSettings
@@ -771,16 +772,16 @@ class AppFlowInstrumentationTest {
         openGuideAtFirstStep()
 
         onNodeWithTag(
-            SettingsTestTags.setupEnlarge(
-                jp.rimtty.codematch.feature.settings.BluetoothScannerSetupCode.ENTER_SETUP,
-            ),
+            SettingsTestTags.setupEnlarge(BluetoothScannerSetupStep.ENTER_SETUP),
         ).performScrollTo().performClick()
         waitForTag(SettingsTestTags.SETUP_FULLSCREEN_CLOSE)
         onNodeWithTag(SettingsTestTags.SETUP_FULLSCREEN_CLOSE).performClick()
-        onNodeWithTag(SettingsTestTags.SETUP_NEXT).performScrollTo().performClick()
-        waitForTag(SettingsTestTags.SETUP_GUIDE_STEP_2)
-        onNodeWithTag(SettingsTestTags.SETUP_NEXT).performScrollTo().performClick()
-        waitForTag(SettingsTestTags.SETUP_GUIDE_STEP_3)
+        // Six pages in the scanner's protocol order; the last "next" closes
+        // the guide.
+        BluetoothScannerSetupStep.entries.drop(1).forEach { nextStep ->
+            onNodeWithTag(SettingsTestTags.SETUP_NEXT).performScrollTo().performClick()
+            waitForTag(SettingsTestTags.setupGuideStep(nextStep))
+        }
         onNodeWithTag(SettingsTestTags.SETUP_NEXT).performScrollTo().performClick()
 
         waitForTag(SettingsTestTags.SCANNER_SECTION)
@@ -996,8 +997,9 @@ class AppFlowInstrumentationTest {
 
     private fun normalizeGuideToFirstStep() {
         waitForTag(SettingsTestTags.SETUP_GUIDE)
-        while (composeRule.onAllNodesWithTag(SettingsTestTags.SETUP_GUIDE_STEP_1)
-                .fetchSemanticsNodes().isEmpty()
+        while (composeRule.onAllNodesWithTag(
+                SettingsTestTags.setupGuideStep(BluetoothScannerSetupStep.ENTER_SETUP),
+            ).fetchSemanticsNodes().isEmpty()
         ) {
             onNodeWithTag(SettingsTestTags.SETUP_PREVIOUS)
                 .performScrollTo()
@@ -1021,7 +1023,7 @@ class AppFlowInstrumentationTest {
     private fun connectFakeScannerThroughSettings() {
         openDestination(R.string.destination_settings)
         openGuideAtFirstStep()
-        repeat(3) {
+        repeat(BluetoothScannerSetupStep.entries.size) {
             onNodeWithTag(SettingsTestTags.SETUP_NEXT)
                 .performScrollTo()
                 .performClick()

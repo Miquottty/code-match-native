@@ -1,8 +1,14 @@
 package jp.rimtty.codematch.feature.settings
 
 /**
- * The three setup labels are the exact ASCII messages used by the iOS guide.
- * Their order is part of the scanner setup protocol and must not be changed.
+ * The distinct setup barcodes of the scanner guide: the exact ASCII messages
+ * used by the iOS guide, each listed once.
+ *
+ * This enum says nothing about the order in which the codes are read, and two
+ * of them are read twice; the guide walks [BluetoothScannerSetupStep] instead.
+ * [scannerDisplayText] is what the scanner shows after reading the code; it is
+ * empty when no display text has been confirmed (the factory reset), and the
+ * guide then hides its display hint rather than inventing one.
  */
 enum class BluetoothScannerSetupCode(
     val rawValue: String,
@@ -14,6 +20,11 @@ enum class BluetoothScannerSetupCode(
         accessibilityId = "enterSetup",
         scannerDisplayText = "Enter Setup",
     ),
+    FACTORY_RESET(
+        rawValue = "/*SetFun00*/",
+        accessibilityId = "factoryReset",
+        scannerDisplayText = "",
+    ),
     GATT_MODE(
         rawValue = "/*BLE_GATT*/",
         accessibilityId = "gattMode",
@@ -23,6 +34,47 @@ enum class BluetoothScannerSetupCode(
         rawValue = "/*ExitSave*/",
         accessibilityId = "saveAndExit",
         scannerDisplayText = "Exit / Save",
+    ),
+}
+
+/**
+ * The six pages of the scanner guide, in the order the codes must be read.
+ *
+ * The order is the scanner's setup protocol, verified on an Inateck BCST-36 on
+ * 2026-11-15, and must not be changed: the factory reset has to be saved and
+ * setup mode entered again before `BLE_GATT` is read, because reading
+ * `BLE_GATT` directly after the factory reset does not take effect.
+ *
+ * `EnterSet` and `ExitSave` each appear twice, so pages are identified by
+ * [accessibilityId] (shared with the iOS guide), never by their [code].
+ */
+enum class BluetoothScannerSetupStep(
+    val code: BluetoothScannerSetupCode,
+    val accessibilityId: String,
+) {
+    ENTER_SETUP(
+        code = BluetoothScannerSetupCode.ENTER_SETUP,
+        accessibilityId = "enterSetup",
+    ),
+    FACTORY_RESET(
+        code = BluetoothScannerSetupCode.FACTORY_RESET,
+        accessibilityId = "factoryReset",
+    ),
+    SAVE_FACTORY_RESET(
+        code = BluetoothScannerSetupCode.SAVE_AND_EXIT,
+        accessibilityId = "saveFactoryReset",
+    ),
+    ENTER_SETUP_AGAIN(
+        code = BluetoothScannerSetupCode.ENTER_SETUP,
+        accessibilityId = "enterSetupAgain",
+    ),
+    GATT_MODE(
+        code = BluetoothScannerSetupCode.GATT_MODE,
+        accessibilityId = "gattMode",
+    ),
+    SAVE_AND_EXIT(
+        code = BluetoothScannerSetupCode.SAVE_AND_EXIT,
+        accessibilityId = "saveAndExit",
     ),
 }
 
@@ -139,6 +191,9 @@ object Code128Encoder {
 
     /** Encode one of the guide's values without exposing it to any logger. */
     fun encode(code: BluetoothScannerSetupCode): Code128Barcode = encode(code.rawValue)
+
+    /** Encode the code a guide page shows. */
+    fun encode(step: BluetoothScannerSetupStep): Code128Barcode = encode(step.code)
 
     private fun patternModules(value: Int): List<Boolean> {
         require(value in CODE128_PATTERNS.indices) { "Unknown Code 128 value: $value" }

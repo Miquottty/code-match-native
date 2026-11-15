@@ -993,6 +993,22 @@
         }
       }
     },
+    "GATTモードを指定するために、もう一度設定受付を開始します。次の画面でGATTを指定します。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter setup mode once more to select GATT mode. GATT is selected on the next screen."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GATTモードを指定するために、もう一度設定受付を開始します。次の画面でGATTを指定します。"
+          }
+        }
+      }
+    },
     "GATTモードへ切り替えられませんでした: %@" : {
       "localizations" : {
         "en" : {
@@ -1662,18 +1678,34 @@
         }
       }
     },
-    "このコードは設定受付を開始するためのものです。ここではまだGATTモードには切り替わりません。次の画面でGATTを指定します。" : {
+    "このコードは設定受付を開始するためのものです。次の画面でスキャナを工場出荷時の設定に戻します。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This code starts setup registration. GATT mode is not switched here; it is selected on the next screen."
+            "value" : "This code puts the scanner into setup mode. The next screen restores the scanner to its factory settings."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "このコードは設定受付を開始するためのものです。ここではまだGATTモードには切り替わりません。次の画面でGATTを指定します。"
+            "value" : "このコードは設定受付を開始するためのものです。次の画面でスキャナを工場出荷時の設定に戻します。"
+          }
+        }
+      }
+    },
+    "この手順はスキャナを工場出荷時の設定に戻します。以前このiPhoneとペアリングしたスキャナで接続できないときは、設定アプリのBluetoothで登録を解除してからやり直してください。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This procedure restores the scanner to its factory settings. If a scanner that was previously paired with this iPhone cannot connect, forget it under Bluetooth in the Settings app, then try again."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この手順はスキャナを工場出荷時の設定に戻します。以前このiPhoneとペアリングしたスキャナで接続できないときは、設定アプリのBluetoothで登録を解除してからやり直してください。"
           }
         }
       }
@@ -2824,6 +2856,22 @@
         }
       }
     },
+    "以前の設定の影響をなくすため、スキャナを工場出荷時の設定に戻します。スキャナに保存していた設定は消えます。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "To clear the effects of earlier settings, this restores the scanner to its factory settings. Settings saved on the scanner are erased."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以前の設定の影響をなくすため、スキャナを工場出荷時の設定に戻します。スキャナに保存していた設定は消えます。"
+          }
+        }
+      }
+    },
     "作業単位ごとにセッションを開始します。一致したコードと時刻が端末内の履歴へ記録されます。" : {
       "localizations" : {
         "en" : {
@@ -3819,18 +3867,18 @@
         }
       }
     },
-    "次の3画面に表示されるコードを、上から順に1回ずつ読み取ってください。" : {
+    "次の6画面に表示されるコードを、順番どおりに1回ずつ読み取ってください。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Scan each code once in order from top to bottom on the next 3 screens."
+            "value" : "Scan the code on each of the next 6 screens once, in the order shown."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "次の3画面に表示されるコードを、上から順に1回ずつ読み取ってください。"
+            "value" : "次の6画面に表示されるコードを、順番どおりに1回ずつ読み取ってください。"
           }
         }
       }
@@ -4773,6 +4821,70 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "設定を開始"
+          }
+        }
+      }
+    },
+    "もう一度、設定を開始" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start setup again"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "もう一度、設定を開始"
+          }
+        }
+      }
+    },
+    "工場出荷時の設定に戻す" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore factory settings"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工場出荷時の設定に戻す"
+          }
+        }
+      }
+    },
+    "初期化を保存して終了" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save the reset and exit"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "初期化を保存して終了"
+          }
+        }
+      }
+    },
+    "初期化を保存して、設定モードをいったん終了します。まだGATTモードには切り替わっていません。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This saves the reset and exits setup mode for now. The scanner has not switched to GATT mode yet."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "初期化を保存して、設定モードをいったん終了します。まだGATTモードには切り替わっていません。"
           }
         }
       }
