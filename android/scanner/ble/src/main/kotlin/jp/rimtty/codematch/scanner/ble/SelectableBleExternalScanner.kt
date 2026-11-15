@@ -63,6 +63,10 @@ class SelectableBleExternalScanner(
     override val devices: List<ScannerDevice>
         get() = connectionCoordinator.devices
 
+    /** The remembered scanner; null once it was forgotten (GATT mode switch). */
+    override val knownDevice: ScannerDevice?
+        get() = if (closed) null else connectionCoordinator.knownDevice
+
     override val connectionState: ConnectionState
         get() = pendingSelection?.let { ConnectionState.Connecting(it) }
             ?: sessionCoordinator?.state?.connection?.asApiState()

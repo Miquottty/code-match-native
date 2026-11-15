@@ -61,6 +61,16 @@ interface ExternalScanner {
     val supportsConnectionControls: Boolean
         get() = true
     val expectedFormat: ScanFormat?
+
+    /**
+     * The scanner [reconnectKnownDevice] would connect, or null when none is
+     * remembered (never connected, or forgotten because the scanner came back
+     * under another identity). Reading it starts nothing: it only lets the
+     * settings screen offer a one-tap reconnect when no device is listed, for
+     * example after a process restart.
+     */
+    val knownDevice: ScannerDevice?
+        get() = null
     val illuminationState: IlluminationState
         get() = IlluminationState.UNSUPPORTED
 

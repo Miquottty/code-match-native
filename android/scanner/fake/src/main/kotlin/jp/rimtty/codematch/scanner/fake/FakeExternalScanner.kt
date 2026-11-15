@@ -34,7 +34,8 @@ class FakeExternalScanner(
     private val mutableDevices = mutableListOf<ScannerDevice>()
     private val mutableDiagnosticEvents = mutableListOf<DiagnosticEvent>()
     private var nextSequence = 0L
-    private var knownDevice: ScannerDevice? = null
+    override var knownDevice: ScannerDevice? = null
+        private set
     private var lastDeliveredValue: String? = null
     private var lastDeliveredAt: Long? = null
     private var sessionConfigurationApplied = false

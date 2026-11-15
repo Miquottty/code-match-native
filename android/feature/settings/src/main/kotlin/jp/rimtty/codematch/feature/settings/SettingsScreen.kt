@@ -1080,6 +1080,31 @@ private fun ScannerCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            val knownScanner = state.knownScannerToReconnect
+            if (knownScanner != null) {
+                // Nothing is selected here, so Reconnect targets the scanner
+                // the adapter remembers (operator-facing reconnectKnownDevice).
+                Button(
+                    onClick = { onAction(SettingsUiAction.Reconnect) },
+                    enabled = state.canReconnectKnownScanner,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 52.dp)
+                        .testTag(SettingsTestTags.RECONNECT_KNOWN),
+                ) {
+                    Icon(Icons.Outlined.Refresh, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(stringResource(R.string.settings_reconnect_known_scanner))
+                        Text(
+                            text = knownScanner.name,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
             Button(
                 onClick = {
                     onAction(
@@ -1131,6 +1156,16 @@ private fun ScannerCard(
                 Text(
                     text = stringResource(R.string.settings_no_devices),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (state.showsDisconnectFirstHint) {
+                Text(
+                    text = stringResource(R.string.settings_disconnect_first_hint),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(SettingsTestTags.DISCONNECT_FIRST_HINT),
                 )
             }
             if (selectedDevice != null && !state.connectionState.isConnected) {

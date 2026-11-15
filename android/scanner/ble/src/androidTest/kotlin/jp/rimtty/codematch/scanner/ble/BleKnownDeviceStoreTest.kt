@@ -55,6 +55,34 @@ class BleKnownDeviceStoreTest {
     }
 
     @Test
+    fun operatorDisconnectedFlagSurvivesDataStoreReopenNextToTheKnownDevice() = runBlocking {
+        val file = temporaryFile()
+        try {
+            withStore(file) { store, _ ->
+                assertFalse(store.readOperatorDisconnected())
+                assertEquals(BleKnownDeviceWriteResult.Saved, store.save(device))
+                assertTrue(store.saveOperatorDisconnected(true))
+                assertTrue(store.readOperatorDisconnected())
+            }
+
+            withStore(file) { reopened, _ ->
+                // The identity is kept: only automatic reconnects are held back.
+                assertTrue(reopened.readOperatorDisconnected())
+                assertEquals(BleKnownDeviceReadResult.Found(device), reopened.read())
+                assertTrue(reopened.saveOperatorDisconnected(false))
+                assertFalse(reopened.readOperatorDisconnected())
+            }
+
+            withStore(file) { reopened, _ ->
+                assertFalse(reopened.readOperatorDisconnected())
+                assertEquals(BleKnownDeviceReadResult.Found(device), reopened.read())
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun profileMismatchAndCorruptionAreRejectedWithoutReturningAnIdentity() = runBlocking {
         val file = temporaryFile()
         try {

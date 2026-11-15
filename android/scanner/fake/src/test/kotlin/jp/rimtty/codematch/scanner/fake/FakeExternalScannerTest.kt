@@ -256,6 +256,9 @@ class FakeExternalScannerTest {
         assertNull(scanner.connectedDevice)
         assertEquals(ConfigurationState.Unavailable, scanner.configurationState)
         assertEquals(device, scanner.preferredDevice)
+        // Exposed through the contract so Settings can offer a one-tap reconnect.
+        assertEquals(device, scanner.knownDevice)
+        assertNull(FakeExternalScanner().knownDevice)
 
         assertTrue(scanner.reconnectKnownDevice())
         assertEquals(device, scanner.connectedDevice)

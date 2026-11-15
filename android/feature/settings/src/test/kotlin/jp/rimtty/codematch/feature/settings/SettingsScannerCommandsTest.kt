@@ -7,6 +7,7 @@ import jp.rimtty.codematch.scanner.api.ExternalScanner
 import jp.rimtty.codematch.scanner.api.ExternalScannerListener
 import jp.rimtty.codematch.scanner.api.ScanFormat
 import jp.rimtty.codematch.scanner.api.ScannerDevice
+import jp.rimtty.codematch.scanner.api.ScannerFailureReasons
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -99,5 +100,51 @@ class SettingsScannerCommandsTest {
         assertFalse(SettingsScannerCommands.connect(scanner, chosen))
         assertFalse(SettingsScannerCommands.reconnect(scanner, state(chosen.id, chosen)))
         assertFalse(SettingsScannerCommands.retry(scanner, state(chosen.id, chosen)))
+    }
+
+    @Test
+    fun retryAfterAnUnresolvedGattSwitchSearchesInsteadOfConnectingTheStaleSelection() {
+        // The selection is the identity that no longer exists after the switch.
+        val scanner = RecordingScanner().apply {
+            connectionState = ConnectionState.Failed(
+                ScannerFailureReasons.RESELECT_AFTER_GATT_SWITCH,
+            )
+        }
+        assertTrue(SettingsScannerCommands.retry(scanner, state(known.id, known, chosen)))
+        assertEquals(listOf("startDiscovery"), scanner.calls)
+
+        // Any other failure still targets the selection.
+        val other = RecordingScanner().apply {
+            connectionState = ConnectionState.Failed("lost")
+        }
+        assertTrue(SettingsScannerCommands.retry(other, state(chosen.id, known, chosen)))
+        assertEquals(listOf("connect:chosen"), other.calls)
+    }
+
+    @Test
+    fun refusalTextIsLeftOutWhileBluetoothItselfIsUnavailable() {
+        // An accepted request never shows it.
+        assertFalse(SettingsScannerCommands.showsConnectRejection(true, ConnectionState.Idle))
+        // Refused over an established link: disconnect first.
+        assertTrue(
+            SettingsScannerCommands.showsConnectRejection(false, ConnectionState.Connected(known)),
+        )
+        assertTrue(SettingsScannerCommands.showsConnectRejection(false, ConnectionState.Idle))
+        assertTrue(
+            SettingsScannerCommands.showsConnectRejection(false, ConnectionState.Failed("start")),
+        )
+        // Bluetooth off / permission missing: the issue card explains it.
+        assertFalse(
+            SettingsScannerCommands.showsConnectRejection(
+                false,
+                ConnectionState.Unavailable("Bluetooth is off"),
+            ),
+        )
+        assertFalse(
+            SettingsScannerCommands.showsConnectRejection(
+                false,
+                ConnectionState.Unavailable("Bluetooth connection permission is required"),
+            ),
+        )
     }
 }

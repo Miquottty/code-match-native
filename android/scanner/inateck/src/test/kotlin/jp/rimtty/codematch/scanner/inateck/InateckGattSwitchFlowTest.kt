@@ -183,8 +183,10 @@ class InateckGattSwitchFlowTest {
     fun restartedScannerIsFollowedUnderItsNewIdentityAndTheOriginIsNeverRetried() {
         connectOriginThatSwitchesToGatt()
         tick()
-        // The origin is no longer the known device, so no automatic reconnect.
+        // The origin is no longer the known device, so no automatic reconnect,
+        // and Settings does not offer it as the scanner to reconnect.
         assertNull(knownStore.saved)
+        assertNull(scanner.knownDevice)
 
         tick(InateckGattSwitch.DEFAULT_REDISCOVERY_DELAY_MILLIS)
         assertEquals(1, gateway.discoveries)
@@ -195,6 +197,7 @@ class InateckGattSwitchFlowTest {
 
         assertEquals(listOf(origin.id, renamed.id), gateway.connectIds)
         assertEquals(renamed, knownStore.saved)
+        assertEquals(renamed, scanner.knownDevice)
         assertEquals(renamed, scanner.boundDevice)
         assertFalse(gattSwitch.isActive)
         // The successor's attempt never completes here, so its connect timeout
@@ -220,6 +223,7 @@ class InateckGattSwitchFlowTest {
             scannerIssueFor(scanner.connectionState, scanner.configurationState),
         )
         assertNull(knownStore.saved)
+        assertNull(scanner.knownDevice)
         repeat(20) { tick(10_000L) }
         assertEquals(listOf(origin.id), gateway.connectIds)
 

@@ -3,6 +3,7 @@ package jp.rimtty.codematch.scanner.ble
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import java.io.IOException
@@ -21,6 +22,13 @@ import jp.rimtty.codematch.scanner.api.ScannerDevice
  * different physical device by accident.
  */
 const val BLE_KNOWN_DEVICE_PREFERENCE_NAME = "knownDevice"
+
+/**
+ * Preference key of the "operator disconnected" flag, kept next to the known
+ * scanner identity: after the operator taps Disconnect no automatic reconnect
+ * runs until the operator connects again, also across a process restart.
+ */
+const val BLE_OPERATOR_DISCONNECTED_PREFERENCE_NAME = "knownDeviceOperatorDisconnected"
 
 /** Version of the small, identity-only known-device envelope. */
 const val BLE_KNOWN_DEVICE_SCHEMA_VERSION = 1
@@ -85,6 +93,17 @@ interface KnownDeviceStore {
 
     /** Clear only the stored identity, optionally requiring an exact ID. */
     fun clear(expectedDeviceId: String? = null): BleKnownDeviceClearResult
+
+    /**
+     * Whether the operator disconnected the scanner and has not connected one
+     * since. The known identity itself is kept, so an explicit reconnect still
+     * works; only automatic reconnects are held back. A store that does not
+     * persist the flag reports false.
+     */
+    fun readOperatorDisconnected(): Boolean = false
+
+    /** Persist the flag; false when it could not be written. */
+    fun saveOperatorDisconnected(disconnected: Boolean): Boolean = true
 }
 
 /**
@@ -189,6 +208,8 @@ class BleKnownDeviceStore(
 ) : KnownDeviceStore {
     private val knownDeviceKey =
         stringPreferencesKey(BLE_KNOWN_DEVICE_PREFERENCE_NAME)
+    private val operatorDisconnectedKey =
+        booleanPreferencesKey(BLE_OPERATOR_DISCONNECTED_PREFERENCE_NAME)
 
     init {
         require(profileIdentity.isNotBlank()) { "profileIdentity must not be blank" }
@@ -287,5 +308,29 @@ class BleKnownDeviceStore(
                 BleKnownDeviceRejectionReason.DATASTORE_CLEAR_FAILED,
             )
         }
+    }
+
+    override fun readOperatorDisconnected(): Boolean = try {
+        runBlocking(ioDispatcher) {
+            dataStore.data.first()[operatorDisconnectedKey] == true
+        }
+    } catch (_: Exception) {
+        // An unreadable flag must not strand the scanner: keep reconnecting.
+        false
+    }
+
+    override fun saveOperatorDisconnected(disconnected: Boolean): Boolean = try {
+        runBlocking(ioDispatcher) {
+            dataStore.edit { preferences ->
+                if (disconnected) {
+                    preferences[operatorDisconnectedKey] = true
+                } else {
+                    preferences.remove(operatorDisconnectedKey)
+                }
+            }
+        }
+        true
+    } catch (_: Exception) {
+        false
     }
 }

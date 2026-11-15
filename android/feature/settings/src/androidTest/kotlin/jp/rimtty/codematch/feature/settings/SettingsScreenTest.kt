@@ -598,6 +598,92 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun selectingAnotherScannerWhileOneIsConnectedAsksToDisconnectFirst() {
+        val connected = ScannerDevice("scanner-1", "Scanner one")
+        val other = ScannerDevice("scanner-2", "Scanner two")
+        val state = mutableStateOf(
+            SettingsUiState(
+                devices = listOf(connected, other),
+                selectedDeviceId = connected.id,
+                connectionState = ConnectionState.Connected(connected),
+                configurationState = ConfigurationState.Ready,
+            ),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                SettingsScreen(state = state.value, onAction = {})
+            }
+        }
+
+        // The connected scanner itself is selected: nothing to explain.
+        composeRule.onAllNodesWithTag(SettingsTestTags.DISCONNECT_FIRST_HINT).assertCountEquals(0)
+
+        state.value = state.value.copy(selectedDeviceId = other.id)
+        composeRule.onNodeWithTag(SettingsTestTags.DISCONNECT_FIRST_HINT)
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertTextContains("別のスキャナに接続するには、先に「切断」を押してください。")
+        // The policy is unchanged: only Disconnect is offered.
+        composeRule.onAllNodesWithTag(SettingsTestTags.CONNECT).assertCountEquals(0)
+        composeRule.onNodeWithTag(SettingsTestTags.DISCONNECT).performScrollTo().assertIsDisplayed()
+
+        // Nothing connected: the hint goes away and Connect is offered.
+        state.value = state.value.copy(connectionState = ConnectionState.Idle)
+        composeRule.onAllNodesWithTag(SettingsTestTags.DISCONNECT_FIRST_HINT).assertCountEquals(0)
+        composeRule.onNodeWithTag(SettingsTestTags.CONNECT).performScrollTo().assertIsEnabled()
+    }
+
+    @Test
+    fun knownScannerCanBeReconnectedWithOneTapWhenNothingIsListed() {
+        val known = ScannerDevice("scanner-1", "Scanner one")
+        val actions = mutableListOf<SettingsUiAction>()
+        val state = mutableStateOf(SettingsUiState(knownDevice = known))
+        composeRule.setContent {
+            MaterialTheme {
+                SettingsScreen(state = state.value, onAction = { actions += it })
+            }
+        }
+
+        // No list and no selection: neither Connect nor the selection's Reconnect.
+        composeRule.onAllNodesWithTag(SettingsTestTags.CONNECT).assertCountEquals(0)
+        composeRule.onAllNodesWithTag(SettingsTestTags.RECONNECT).assertCountEquals(0)
+        composeRule.onNodeWithTag(SettingsTestTags.RECONNECT_KNOWN)
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertIsEnabled()
+            .assertHeightIsAtLeast(48.dp)
+            .assertTextContains("以前接続したスキャナに再接続")
+            .assertTextContains("Scanner one")
+        // Showing it requests nothing; the tap emits the operator's Reconnect.
+        assertTrue(actions.isEmpty())
+        composeRule.onNodeWithTag(SettingsTestTags.RECONNECT_KNOWN).performClick()
+        assertEquals(listOf<SettingsUiAction>(SettingsUiAction.Reconnect), actions)
+
+        state.value = state.value.copy(
+            devices = listOf(known),
+            connectionState = ConnectionState.Connecting(known),
+        )
+        composeRule.onNodeWithTag(SettingsTestTags.RECONNECT_KNOWN)
+            .performScrollTo()
+            .assertIsNotEnabled()
+
+        state.value = state.value.copy(connectionState = ConnectionState.Connected(known))
+        composeRule.onAllNodesWithTag(SettingsTestTags.RECONNECT_KNOWN).assertCountEquals(0)
+
+        // With a selection, Connect/Reconnect of that selection take over.
+        state.value = state.value.copy(
+            connectionState = ConnectionState.Idle,
+            selectedDeviceId = known.id,
+        )
+        composeRule.onAllNodesWithTag(SettingsTestTags.RECONNECT_KNOWN).assertCountEquals(0)
+        composeRule.onNodeWithTag(SettingsTestTags.RECONNECT).performScrollTo().assertIsDisplayed()
+
+        // No remembered scanner: nothing is offered.
+        state.value = SettingsUiState()
+        composeRule.onAllNodesWithTag(SettingsTestTags.RECONNECT_KNOWN).assertCountEquals(0)
+    }
+
+    @Test
     fun refusedConnectRequestIsShown() {
         composeRule.setContent {
             MaterialTheme {

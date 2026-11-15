@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Code Match のインストール</title>
+<style>
+  body { margin: 0; font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; background: #f6f7f9; color: #1c1c1e; line-height: 1.7; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px 56px; }
+  h1 { font-size: 1.5rem; margin: 0 0 8px; }
+  .lead { margin: 0 0 20px; color: #444; }
+  .cta { display: block; text-align: center; background: #1a56db; color: #fff; text-decoration: none; font-size: 1.25rem; font-weight: 700; padding: 18px 20px; border-radius: 14px; box-shadow: 0 2px 8px rgba(26,86,219,.35); }
+  .cta small { display: block; font-size: .85rem; font-weight: 400; opacity: .9; }
+  .meta { font-size: .85rem; color: #666; text-align: center; margin: 8px 0 24px; }
+  h2.section { font-size: 1.15rem; margin: 32px 0 8px; border-left: 5px solid #1a56db; padding-left: 10px; }
+  .step { background: #fff; border-radius: 14px; padding: 16px; margin: 16px 0; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .step h3 { font-size: 1.05rem; margin: 0 0 8px; display: flex; align-items: center; gap: 10px; }
+  .step h3 .n { flex: none; background: #1a56db; color: #fff; border-radius: 999px; width: 30px; height: 30px; line-height: 30px; text-align: center; font-size: .95rem; }
+  .step p { margin: 6px 0; }
+  .step img { display: block; width: 100%; max-width: 300px; margin: 12px auto 0; border: 1px solid #d4d4d8; border-radius: 12px; }
+  .tap { background: #fff3cd; border: 1px solid #f0d78c; padding: 1px 8px; border-radius: 6px; font-weight: 700; white-space: nowrap; }
+  .warn { background: #fdecea; border-left: 4px solid #d93025; padding: 8px 12px; border-radius: 6px; font-size: .95rem; }
+  .info { background: #e8f0fe; border-left: 4px solid #1a56db; padding: 8px 12px; border-radius: 6px; font-size: .95rem; }
+  .faq dt { font-weight: 700; margin-top: 14px; }
+  .faq dd { margin: 4px 0 0; }
+  footer { margin-top: 40px; font-size: .8rem; color: #888; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Code Match のインストール</h1>
+  <p class="lead">Android スマートフォンに「Code Match」を入れる手順です。下の青いボタンを押してから、この下の手順どおりに進めてください。ボタンは 1 回押せば十分です。</p>
+
+  <a class="cta" href="CodeMatch.apk">アプリをダウンロード<small>Code Match（Android 用）</small></a>
+  <p class="meta">バージョン __VERSION__ ／ 更新日 __DATE__</p>
+
+  <p class="info">途中で「有害」「不明なアプリ」「ブロック」などの警告が出ますが、これは Google Play 以外から入れるアプリに必ず出る表示です。</p>
+
+  <h2 class="section">インストールの手順</h2>
+
+  <section class="step">
+    <h3><span class="n">1</span>「アプリをダウンロード」を押す</h3>
+    <p>上の青いボタンを押します。</p>
+    <img src="images/01-page.png" alt="このページの「アプリをダウンロード」ボタン">
+  </section>
+
+  <section class="step">
+    <h3><span class="n">2</span>「ダウンロードを続行」を押す</h3>
+    <p>「有害なファイルの可能性があります」と出たら、<span class="tap">ダウンロードを続行</span> を押します。</p>
+    <img src="images/02-warning.png" alt="有害なファイルの可能性があります の画面">
+  </section>
+
+  <section class="step">
+    <h3><span class="n">3</span>「開く」を押す</h3>
+    <p>画面の上に「ダウンロードが完了しました」と出たら、右の <span class="tap">開く</span> を押します。</p>
+    <img src="images/03-complete.png" alt="ダウンロードが完了しました の表示">
+    <p style="margin-top:14px"><strong>表示が消えてしまったときは</strong>、画面右上の <span class="tap">⋮</span> を押し、<span class="tap">ダウンロード</span> を押して、一覧の <span class="tap">CodeMatch.apk</span> を押します。</p>
+    <img src="images/04-menu.png" alt="Chrome のメニューにある ダウンロード">
+    <img src="images/05-downloads.png" alt="ダウンロード一覧の CodeMatch.apk">
+    <p style="margin-top:14px"><strong>もう一度「アプリをダウンロード」を押してしまったときは</strong>、「ファイルをもう一度ダウンロードしますか？」と出ます。そこに表示されている <span class="tap">CodeMatch.apk</span> を押すと、そのままインストールの画面（手順 4 または 6）に進めます。</p>
+    <p>名前が「CodeMatch (1).apk」のような入力欄になっていて押しても反応しないときは、<span class="tap">ダウンロード</span> を押してもう一度ダウンロードし、手順 3 の「開く」から進めてください。</p>
+    <img src="images/12-redownload.png" alt="ファイルをもう一度ダウンロードしますか の画面">
+  </section>
+
+  <section class="step">
+    <h3><span class="n">4</span>「設定」を押す</h3>
+    <p>「権限が必要です」と出たら、<span class="tap">設定</span> を押します。（2 回目以降のインストールでは出ません）</p>
+    <img src="images/06-permission.png" alt="権限が必要です の画面">
+  </section>
+
+  <section class="step">
+    <h3><span class="n">5</span>「この提供元のアプリを許可」をオンにする</h3>
+    <p>右側のスイッチ <span class="tap">この提供元のアプリを許可</span> を押してオンにします。オンにすると、自動で次の画面が出ます。</p>
+    <p class="warn">ここで「戻る」を押すと中断されます。そのまま待ってください。</p>
+    <img src="images/07-allow.png" alt="不明なアプリのインストール の許可スイッチ">
+  </section>
+
+  <section class="step">
+    <h3><span class="n">6</span>「インストール」を押す</h3>
+    <p>「このアプリをインストールしますか？」と出たら、<span class="tap">インストール</span> を押します。</p>
+    <img src="images/08-install.png" alt="このアプリをインストールしますか の画面">
+  </section>
+
+  <section class="step">
+    <h3><span class="n">7</span>「詳細」→「インストールする」を押す</h3>
+    <p>「デバイスを保護するため、アプリをブロックしました」と出たら、<span class="tap">詳細</span> を押します。</p>
+    <p class="warn">「OK」を押すと中止されてしまいます。「OK」は押さないでください。</p>
+    <img src="images/09-protect.png" alt="Google Play プロテクトのブロック画面">
+    <p style="margin-top:14px">文章が広がったら、「OK」の少し上にある <span class="tap">インストールする</span> を押します。</p>
+    <img src="images/10-protect-details.png" alt="詳細を開いた状態の インストールする">
+  </section>
+
+  <section class="step">
+    <h3><span class="n">8</span>できあがり</h3>
+    <p>「アプリをインストールしました」と出たら完了です。<span class="tap">開く</span> を押すとアプリが起動します。ホーム画面にも「Code Match」のアイコンが増えています。</p>
+    <p>初めて起動したときにカメラの使用を聞かれたら、<span class="tap">アプリの使用時のみ</span> を選んでください。</p>
+    <img src="images/11-done.png" alt="アプリをインストールしました の画面">
+  </section>
+
+  <h2 class="section">困ったときは</h2>
+  <dl class="faq">
+    <dt>ダウンロードしただけで、何も起きない</dt>
+    <dd>手順 3 の「表示が消えてしまったときは」のとおり、Chrome の右上 ⋮ → ダウンロード → CodeMatch.apk を押してください。</dd>
+    <dt>もう一度「アプリをダウンロード」を押したら「ファイルをもう一度ダウンロードしますか？」と出た</dt>
+    <dd>表示されている「CodeMatch.apk」を押すと、ダウンロードし直さずにインストールの画面へ進めます。押しても反応しない場合は「ダウンロード」を押して、手順 3 の「開く」から進めてください。</dd>
+    <dt>「OK」を押してしまい、インストールされなかった</dt>
+    <dd>やり直せます。Chrome の右上 ⋮ → ダウンロード → CodeMatch.apk を押して、手順 6 から進めてください。</dd>
+    <dt>新しいバージョンに更新したい</dt>
+    <dd>このページからもう一度ダウンロードして、同じ手順で進めてください。手順 4〜5 は出ません。今までの履歴は消えません。</dd>
+    <dt>Chrome 以外のブラウザで開いている</dt>
+    <dd>画面の文言が少し違うことがありますが、流れは同じです。「開く」→「設定で許可」→「インストール」→「詳細」→「インストールする」の順に進めてください。</dd>
+  </dl>
+
+  <footer>Code Match（Android）社内配布用</footer>
+</main>
+</body>
+</html>

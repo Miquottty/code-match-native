@@ -56,6 +56,7 @@
     <string name="settings_connect">Connect</string>
     <string name="settings_disconnect">Disconnect</string>
     <string name="settings_reconnect">Reconnect</string>
+    <string name="settings_reconnect_known_scanner">Reconnect the previous scanner</string>
     <string name="settings_device_selected">Selected</string>
     <string name="settings_device_not_selected">Not selected</string>
     <string name="settings_status_idle">Not connected</string>
@@ -86,6 +87,7 @@
     <string name="settings_scanner_reselect_title">Select the scanner again</string>
     <string name="settings_scanner_reselect_description">The scanner was switched to GATT mode. Tap “Search for scanners”, then select the scanner that appears and connect.</string>
     <string name="settings_connect_rejected">Could not start the connection. If a scanner is connected, disconnect it first and try again.</string>
+    <string name="settings_disconnect_first_hint">To connect another scanner, tap Disconnect first.</string>
     <string name="settings_scanner_retry">Try again</string>
     <string name="settings_scanner_open_settings">Bluetooth settings</string>
 
