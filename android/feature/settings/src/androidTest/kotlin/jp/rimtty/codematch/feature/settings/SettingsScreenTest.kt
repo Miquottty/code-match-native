@@ -621,9 +621,11 @@ class SettingsScreenTest {
         rows.assertCountEquals(2)
         composeRule.onAllNodesWithText("Scanner info query timed out").assertCountEquals(1)
         composeRule.onAllNodesWithText("Scanner connected").assertCountEquals(1)
-        val newestTop = composeRule.onNodeWithText("Scanner info query timed out").fetchSemanticsNode().boundsInRoot.top
-        val oldestTop = composeRule.onNodeWithText("Scanner connected").fetchSemanticsNode().boundsInRoot.top
-        assertTrue(newestTop < oldestTop)
+        // positionInRoot is not clipped to the viewport: on a short screen the
+        // rows sit below the fold, where boundsInRoot collapses to the same edge.
+        val newestTop = composeRule.onNodeWithText("Scanner info query timed out").fetchSemanticsNode().positionInRoot.y
+        val oldestTop = composeRule.onNodeWithText("Scanner connected").fetchSemanticsNode().positionInRoot.y
+        assertTrue("newest=$newestTop oldest=$oldestTop", newestTop < oldestTop)
         composeRule.onNodeWithTag(SettingsTestTags.DIAGNOSTICS_TOGGLE).performScrollTo().performClick()
         composeRule.onAllNodesWithTag(SettingsTestTags.DIAGNOSTIC_ROW).assertCountEquals(0)
     }
