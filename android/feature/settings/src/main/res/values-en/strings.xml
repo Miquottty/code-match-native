@@ -83,11 +83,6 @@
     <string name="settings_diagnostics_expand">Show events</string>
     <string name="settings_diagnostics_collapse">Collapse events</string>
     <string name="settings_diagnostics_empty">No connection or configuration events yet.</string>
-    <string name="settings_diagnostic_connection">Connection</string>
-    <string name="settings_diagnostic_configuration">Configuration</string>
-    <string name="settings_diagnostic_error">Error</string>
-    <string name="settings_diagnostic_row">%1$d: %2$s event</string>
-    <string name="settings_diagnostic_accessibility">Diagnostic event %1$d. %2$s</string>
 
     <string name="settings_camera_only_title">Camera input only</string>
     <string name="settings_camera_only_description">Bluetooth scanners are unavailable in this release. Scan with the camera from the comparison screen.</string>
@@ -130,7 +125,7 @@
     <string name="settings_tuning_matched">Read tuning: confirmed (no change needed)</string>
     <string name="settings_tuning_applied">Read tuning: applied (multi-code off, inverse off, red light 4 s)</string>
     <string name="settings_tuning_failed">Could not confirm the read tuning. Reconnect the scanner.</string>
-    <string name="settings_diagnostics_note">Keeps the latest 300 events and shows the latest 20 here. Scan values are never included.</string>
+    <string name="settings_diagnostics_note">Keeps the latest 1,000 events and shows the latest 20 here, newest first. Scan values are never included.</string>
     <string name="settings_diagnostics_share">Send diagnostic log to support</string>
     <string name="settings_diagnostics_save">Save diagnostic log</string>
     <string name="settings_diagnostics_subject">CodeMatch Bluetooth diagnostic log</string>

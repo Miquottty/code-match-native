@@ -587,8 +587,7 @@ class SettingsScreenTest {
     }
 
     @Test
-    fun diagnosticsNeverExposeDiagnosticMessageOrScanPayload() {
-        val payload = "private-scan-payload-123"
+    fun diagnosticsListShowsTimeAndStatusTextNewestFirst() {
         composeRule.setContent {
             MaterialTheme {
                 SettingsScreen(
@@ -596,8 +595,15 @@ class SettingsScreenTest {
                         diagnosticEvents = listOf(
                             DiagnosticEvent(
                                 category = DiagnosticCategory.CONNECTION,
-                                message = payload,
+                                message = "Scanner connected",
+                                timestampMillis = 1_757_000_000_000L,
                                 sequence = 1,
+                            ),
+                            DiagnosticEvent(
+                                category = DiagnosticCategory.ERROR,
+                                message = "Scanner info query timed out",
+                                timestampMillis = 1_757_000_002_000L,
+                                sequence = 2,
                             ),
                         ),
                     ),
@@ -609,8 +615,17 @@ class SettingsScreenTest {
         composeRule.onAllNodesWithTag(SettingsTestTags.DIAGNOSTICS).assertCountEquals(1)
         composeRule.onAllNodesWithTag(SettingsTestTags.DIAGNOSTIC_ROW).assertCountEquals(0)
         composeRule.onNodeWithTag(SettingsTestTags.DIAGNOSTICS_TOGGLE).performScrollTo().performClick()
-        composeRule.onAllNodesWithTag(SettingsTestTags.DIAGNOSTIC_ROW).assertCountEquals(1)
-        composeRule.onAllNodesWithText(payload).assertCountEquals(0)
+        // Like iOS, each row is the status text itself, newest first. The
+        // text is the same payload-free message the exported log carries.
+        val rows = composeRule.onAllNodesWithTag(SettingsTestTags.DIAGNOSTIC_ROW, useUnmergedTree = true)
+        rows.assertCountEquals(2)
+        composeRule.onAllNodesWithText("Scanner info query timed out").assertCountEquals(1)
+        composeRule.onAllNodesWithText("Scanner connected").assertCountEquals(1)
+        // positionInRoot is not clipped to the viewport: on a short screen the
+        // rows sit below the fold, where boundsInRoot collapses to the same edge.
+        val newestTop = composeRule.onNodeWithText("Scanner info query timed out").fetchSemanticsNode().positionInRoot.y
+        val oldestTop = composeRule.onNodeWithText("Scanner connected").fetchSemanticsNode().positionInRoot.y
+        assertTrue("newest=$newestTop oldest=$oldestTop", newestTop < oldestTop)
         composeRule.onNodeWithTag(SettingsTestTags.DIAGNOSTICS_TOGGLE).performScrollTo().performClick()
         composeRule.onAllNodesWithTag(SettingsTestTags.DIAGNOSTIC_ROW).assertCountEquals(0)
     }

@@ -97,7 +97,6 @@ import jp.rimtty.codematch.core.model.FailureSound
 import jp.rimtty.codematch.core.model.SuccessSound
 import jp.rimtty.codematch.scanner.api.ConfigurationState
 import jp.rimtty.codematch.scanner.api.ConnectionState
-import jp.rimtty.codematch.scanner.api.DiagnosticCategory
 import jp.rimtty.codematch.scanner.api.DiagnosticEvent
 import jp.rimtty.codematch.scanner.api.ScannerDevice
 import kotlin.math.floor
@@ -1243,7 +1242,9 @@ private fun DiagnosticsCard(
     val toggleLabel = stringResource(
         if (expanded) R.string.settings_diagnostics_collapse else R.string.settings_diagnostics_expand,
     )
-    val visibleEvents = events.takeLast(MAX_DIAGNOSTIC_EVENTS)
+    val visibleRows = remember(events) {
+        DiagnosticLogFormatter.recentRows(events, MAX_DIAGNOSTIC_EVENTS)
+    }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -1281,14 +1282,14 @@ private fun DiagnosticsCard(
                     contentDescription = toggleLabel,
                 )
             }
-            if (expanded && visibleEvents.isEmpty()) {
+            if (expanded && visibleRows.isEmpty()) {
                 Text(
                     text = stringResource(R.string.settings_diagnostics_empty),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else if (expanded) {
-                visibleEvents.forEach { event ->
-                    DiagnosticRow(event = event)
+                visibleRows.forEach { row ->
+                    DiagnosticRow(row = row)
                 }
             }
             if (events.isNotEmpty()) {
@@ -1322,36 +1323,33 @@ private fun DiagnosticsCard(
 }
 
 /**
- * Render only a localized category and sequence. In particular, the adapter's
- * diagnostic message is never shown here: even a faulty adapter cannot put a
- * scan value into the settings UI or an accessibility tree.
+ * One diagnostic line: local time and the status text, newest first in the
+ * list, like iOS. The text is the same sanitized message the export and the
+ * administrator mail already carry; the scanner API has no way to record a
+ * scan value in it (pinned by `BleExternalScannerTest`).
  */
 @Composable
-private fun DiagnosticRow(event: DiagnosticEvent) {
-    val category = diagnosticCategoryText(event.category)
-    val description = stringResource(
-        R.string.settings_diagnostic_accessibility,
-        event.sequence,
-        category,
-    )
+private fun DiagnosticRow(row: DiagnosticLogFormatter.Row) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
+            .padding(vertical = 2.dp)
             .testTag(SettingsTestTags.DIAGNOSTIC_ROW)
-            .semantics(mergeDescendants = true) {
-                contentDescription = description
-            },
-        verticalAlignment = Alignment.CenterVertically,
+            .semantics(mergeDescendants = true) {},
+        verticalAlignment = Alignment.Top,
     ) {
-        Icon(
-            imageVector = Icons.Outlined.CheckCircle,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp),
+        Text(
+            text = row.time,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.width(8.dp))
-        Text(stringResource(R.string.settings_diagnostic_row, event.sequence, category))
+        Text(
+            text = row.message,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (row.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
@@ -1719,15 +1717,6 @@ private fun configurationStatusText(state: ConfigurationState): String = stringR
         ConfigurationState.Configuring -> R.string.settings_configuration_configuring
         ConfigurationState.Ready -> R.string.settings_configuration_ready
         is ConfigurationState.Failed -> R.string.settings_configuration_failed
-    },
-)
-
-@Composable
-private fun diagnosticCategoryText(category: DiagnosticCategory): String = stringResource(
-    when (category) {
-        DiagnosticCategory.CONNECTION -> R.string.settings_diagnostic_connection
-        DiagnosticCategory.CONFIGURATION -> R.string.settings_diagnostic_configuration
-        DiagnosticCategory.ERROR -> R.string.settings_diagnostic_error
     },
 )
 

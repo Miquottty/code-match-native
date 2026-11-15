@@ -83,11 +83,6 @@
     <string name="settings_diagnostics_expand">イベント一覧を表示</string>
     <string name="settings_diagnostics_collapse">イベント一覧を折りたたむ</string>
     <string name="settings_diagnostics_empty">接続と設定のイベントはまだありません。</string>
-    <string name="settings_diagnostic_connection">接続</string>
-    <string name="settings_diagnostic_configuration">設定</string>
-    <string name="settings_diagnostic_error">エラー</string>
-    <string name="settings_diagnostic_row">%1$d：%2$sイベント</string>
-    <string name="settings_diagnostic_accessibility">診断イベント%1$d。%2$s</string>
 
     <string name="settings_camera_only_title">カメラ入力のみ</string>
     <string name="settings_camera_only_description">このリリースではBluetoothスキャナを使用できません。照合画面のカメラで読み取ってください。</string>
@@ -130,7 +125,7 @@
     <string name="settings_tuning_matched">読取チューニング: 確認済み（変更なし）</string>
     <string name="settings_tuning_applied">読取チューニング: 適用済み（多コードOFF・反転OFF・赤光4秒）</string>
     <string name="settings_tuning_failed">読取チューニングを確認できませんでした。スキャナーを再接続してください。</string>
-    <string name="settings_diagnostics_note">直近300件を保持し、ここには直近20件を表示します。読み取った値は含まれません。</string>
+    <string name="settings_diagnostics_note">直近1,000件を保持し、ここには直近20件を新しい順に表示します。読み取った値は含まれません。</string>
     <string name="settings_diagnostics_share">診断ログを管理者へ送る</string>
     <string name="settings_diagnostics_save">診断ログを保存</string>
     <string name="settings_diagnostics_subject">CodeMatch Bluetooth診断ログ</string>
