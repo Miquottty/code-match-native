@@ -123,12 +123,12 @@ bash scripts/verify-release-hardening.sh
 adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 
-設定画面が生成する3つのCode 128は、自動instrumentationで同梱ML Kitから `/*EnterSet*/` → `/*BLE_GATT*/` → `/*ExitSave*/` の順にexact decodeできることを確認済みです。これは画像生成と復号の証拠であり、対象BCST-36が実際に読み取って設定を変更・保存した証拠ではありません。
+接続ガイドは6手順です（`/*EnterSet*/` → `/*SetFun00*/`（工場出荷時の設定に戻す） → `/*ExitSave*/` → `/*EnterSet*/` → `/*BLE_GATT*/` → `/*ExitSave*/`。2026-11-15にBCST-36で、この順番でないとGATTモードへ切り替わらないことをユーザーが確認）。設定画面が生成する4種類のCode 128は、自動instrumentationで同梱ML Kitから各手順のコマンドへexact decodeできることを確認済みです。これは画像生成と復号の証拠であり、対象BCST-36が実際に読み取って設定を変更・保存した証拠ではありません。
 
 以下は当初の受入項目です。Pixel 7 / BCST-36で実施済みの範囲は本節の実施記録と[`STATUS.md`](STATUS.md)の到達点、未実施のまま打ち切った範囲は同ページの「打ち切った確認項目」を参照してください。
 
 1. Android 12以降のPixel 7で、必要時だけNearby devices権限を要求する（Samsung系は対象外）。
-2. 初回設定ガイドの3コードを順に実機scannerで読み、GATT modeが保存されたことを確認してから、検索、接続、pairing、scan通知、切断、既知端末再接続を確認する。
+2. 接続ガイドの6手順のコードを順に実機scannerで読み、GATT modeが保存されたことを確認してから、検索、接続、pairing、scan通知、切断、既知端末再接続を確認する。
 3. QR→Code 128の一致、不一致、逆順拒否、重複callback抑止、連続箱を確認する。
 4. 接続前のscanner報告を全symbology保存し、QR+Code 128固定mode後、終了・背景・切断・再接続で完全復元する。
 5. timeout後にGATT commandが重ならず、安全にカメラへfallbackすることを確認する。
