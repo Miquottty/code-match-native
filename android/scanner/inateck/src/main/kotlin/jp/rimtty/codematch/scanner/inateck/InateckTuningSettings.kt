@@ -14,6 +14,12 @@ import com.google.gson.JsonObject
  * the reported inventory are considered and only differing items are written,
  * always with the area the device reported. Values persist on the scanner and
  * are not restored on disconnect, like illumination.
+ *
+ * The last four items keep the scanner's built-in buffer from filling up
+ * (#155): inventory mode off, erase the buffer at power-on, and never replay
+ * buffered reads into the app (auto upload and double-click upload off). A
+ * scanner stores what it reads while no host is connected, and once the
+ * buffer is full it rejects every read.
  */
 internal object InateckTuningSettings {
     data class Item(val name: String, val value: Int)
@@ -28,6 +34,10 @@ internal object InateckTuningSettings {
         Item("hanxin_read_phase", 0),
         Item("pdf417_read_phase", 0),
         Item("auto_close_mode", 20),
+        Item("inventory_mode", 0),
+        Item("start_up_clean_cache", 1),
+        Item("auto_upload_cache", 0),
+        Item("d_click_upload_flag", 0),
     )
 
     private data class Reported(val area: String, val value: Int)

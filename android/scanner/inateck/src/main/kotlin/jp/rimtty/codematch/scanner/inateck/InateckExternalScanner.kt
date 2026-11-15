@@ -37,6 +37,8 @@ private const val TUNING_RETRY_DELAY_MILLIS = 1_000L
 private const val TUNING_ATTEMPT_LIMIT = 10
 private const val DEVICE_INFO_TIMEOUT_MILLIS = 4_000L
 private const val DEVICE_INFO_ATTEMPT_LIMIT = 10
+private const val CACHE_CLEAR_TIMEOUT_MILLIS = 6_000L
+private const val CACHE_CLEAR_ATTEMPT_LIMIT = 10
 
 /**
  * Official-SDK-backed scanner bound by the `release` app variant.
@@ -67,6 +69,11 @@ class InateckExternalScanner private constructor(
     private var deviceInfoPending = false
     private var deviceInfoDeadline = 0L
     private var deviceInfoAttempts = 0
+    private var cacheGeneration = 0L
+    private var cacheDone = false
+    private var cachePending = false
+    private var cacheDeadline = 0L
+    private var cacheAttempts = 0
     private var applicationForeground = false
     private val deferredSettings = InateckDeferredSettings()
 
@@ -122,14 +129,63 @@ class InateckExternalScanner private constructor(
         deviceInfoDone = false
         deviceInfoPending = false
         deviceInfoAttempts = 0
+        cacheGeneration++
+        cacheDone = false
+        cachePending = false
+        cacheAttempts = 0
         publishTuning(TuningState.UNKNOWN)
+    }
+
+    /**
+     * The scanner keeps what it reads while no host is connected, and rejects
+     * every read once that buffer is full (#155). Nothing in this app uses
+     * those reads, so they are erased once per connection, after the device
+     * information read. Like that read, an unanswered command is only
+     * abandoned: buffer maintenance must never cost the link.
+     */
+    private fun refreshCacheMaintenance() {
+        if (illuminationWaitingForDisconnect) return
+        val deviceId = connectedDevice?.id ?: return
+        if (cachePending) {
+            if (nowMillis() < cacheDeadline) return
+            cacheGeneration++
+            cachePending = false
+            gateway.abandonCacheClear()
+            connection.recordDiagnostic(InateckCacheOutcome.TIMED_OUT_LINE, error = true)
+            drainDeferredSettings()
+            return
+        }
+        if (cacheDone || !deviceInfoDone || deviceInfoPending || !applicationForeground ||
+            !configurationState.isReady
+        ) {
+            return
+        }
+
+        val generation = ++cacheGeneration
+        cachePending = true
+        cacheDeadline = nowMillis() + CACHE_CLEAR_TIMEOUT_MILLIS
+        val accepted = gateway.clearScannerCache(deviceId) { outcome ->
+            if (!closed && generation == cacheGeneration && connectedDevice?.id == deviceId) {
+                cachePending = false
+                connection.recordDiagnostic(outcome.diagnosticLine())
+                drainDeferredSettings()
+            }
+        }
+        if (accepted) {
+            cacheDone = true
+        } else if (generation == cacheGeneration) {
+            // Another SDK operation owns the link; try again on a later tick.
+            cachePending = false
+            cacheDone = ++cacheAttempts >= CACHE_CLEAR_ATTEMPT_LIMIT
+        }
     }
 
     private val settingsBusy: Boolean
         get() = illuminationWaitingForDisconnect ||
             illuminationState == IlluminationState.APPLYING ||
             tuningState == TuningState.APPLYING ||
-            deviceInfoPending
+            deviceInfoPending ||
+            cachePending
 
     /**
      * Read tuning runs once per connection after the illumination check has
@@ -172,6 +228,9 @@ class InateckExternalScanner private constructor(
                         InateckTuningOutcome.FAILED -> TuningState.FAILED
                     },
                 )
+                // What the scanner reported before this tuning wrote anything,
+                // so a mailed log shows each model's own buffer settings (#155).
+                gateway.reportedDataModes()?.let { connection.recordDiagnostic(it.diagnosticLine()) }
                 drainDeferredSettings()
             }
         }
@@ -362,6 +421,7 @@ class InateckExternalScanner private constructor(
             refreshIllumination()
             refreshTuning()
             refreshDeviceInfo()
+            refreshCacheMaintenance()
             handler.postDelayed(this, TICK_INTERVAL_MILLIS)
         }
     }

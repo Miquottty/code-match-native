@@ -74,6 +74,26 @@ internal interface InateckSdkGateway {
     fun abandonDeviceInfoRead() {}
 
     /**
+     * Counts the reads held in the scanner's built-in buffer and, when there
+     * are any, erases them and counts again (#155). Returns false when another
+     * operation owns the link or the gateway cannot do it.
+     */
+    fun clearScannerCache(
+        deviceId: String,
+        completion: (InateckCacheOutcome) -> Unit,
+    ): Boolean = false
+
+    /** Gives up a [clearScannerCache] that has not answered; late callbacks are dropped. */
+    fun abandonCacheClear() {}
+
+    /**
+     * Buffer-related settings from the inventory the last [applyTuning] read
+     * before it wrote anything, or null when no inventory has been read on
+     * this connection.
+     */
+    fun reportedDataModes(): InateckDataModes? = null
+
+    /**
      * Receives the connect-time Bluetooth-mode check (#137). Before the link
      * is reported connected, the gateway reads the settings; a scanner that is
      * not in GATT mode is switched with [InateckGattMode.SWITCH_COMMAND],

@@ -70,6 +70,52 @@ class InateckTuningSettingsTest {
         assertFalse(InateckTuningSettings.confirmed(listOf(item("code128_on", "1"))))
     }
 
+    @Test fun bufferSettingsAreAlignedOnlyWhereTheScannerReportsThem() {
+        // BCST-36 as the official app shows it out of the box (#155): nothing
+        // erases the buffer, so reads made while disconnected pile up.
+        val factory = listOf(
+            item("inventory_mode", "0"),
+            item("start_up_clean_cache", "0"),
+            item("auto_upload_cache", "0"),
+            item("d_click_upload_flag", "1"),
+        )
+        val differences = InateckTuningSettings.differences(factory)
+        assertEquals(
+            listOf(
+                InateckTuningSettings.Item("start_up_clean_cache", 1),
+                InateckTuningSettings.Item("d_click_upload_flag", 0),
+            ),
+            differences,
+        )
+        val command = JsonParser.parseString(InateckTuningSettings.command(factory, differences)).asJsonArray
+        assertEquals(
+            listOf(item("start_up_clean_cache", "1"), item("d_click_upload_flag", "0")),
+            command.map { entry -> entry.asJsonObject.entrySet().associate { it.key to it.value.asString } },
+        )
+
+        val inventoryModeLeftOn = listOf(item("inventory_mode", "1"), item("auto_upload_cache", "1"))
+        assertEquals(
+            listOf(
+                InateckTuningSettings.Item("inventory_mode", 0),
+                InateckTuningSettings.Item("auto_upload_cache", 0),
+            ),
+            InateckTuningSettings.differences(inventoryModeLeftOn),
+        )
+
+        // A model without cache management reports none of them: nothing is written.
+        assertTrue(InateckTuningSettings.differences(inventory).none { it.name.contains("cache") })
+        assertTrue(
+            InateckTuningSettings.confirmed(
+                listOf(
+                    item("inventory_mode", "0"),
+                    item("start_up_clean_cache", "1"),
+                    item("auto_upload_cache", "0"),
+                    item("d_click_upload_flag", "0"),
+                ),
+            ),
+        )
+    }
+
     @Test fun ambiguousOrInvalidEntriesAreIgnored() {
         val duplicated = inventory + item("auto_close_mode", "10", area = "other")
         assertTrue(InateckTuningSettings.present(duplicated).none { it.name == "auto_close_mode" })

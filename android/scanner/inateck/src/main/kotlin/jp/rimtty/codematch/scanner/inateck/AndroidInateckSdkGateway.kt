@@ -40,6 +40,8 @@ internal class AndroidInateckSdkGateway(
     private var connectionAttempt = 0L
     private val operationGate = InateckOperationGate()
     private var deviceInfoOperation: Long? = null
+    private var cacheOperation: Long? = null
+    private var dataModes: InateckDataModes? = null
     private var disconnectingDevice: BleScannerDevice? = null
     private var closed = false
     private var gattModeListener: ((InateckGattModeEvent) -> Unit)? = null
@@ -141,6 +143,7 @@ internal class AndroidInateckSdkGateway(
             outputHandshakeTimeout?.let { mainHandler.removeCallbacks(it) }
             pendingDevice = null
             activeDevice = device
+            dataModes = null
             if (!connectCompletionDelivered) {
                 connectCompletionDelivered = true
                 completion(Result.success(Unit))
@@ -671,6 +674,7 @@ internal class AndroidInateckSdkGateway(
                         finish(InateckTuningOutcome.FAILED)
                         return@dispatch
                     }
+                    dataModes = InateckDataModes.from(inventory)
                     if (InateckTuningSettings.present(inventory).isEmpty()) {
                         finish(InateckTuningOutcome.UNSUPPORTED)
                         return@dispatch
@@ -769,6 +773,74 @@ internal class AndroidInateckSdkGateway(
         deviceInfoOperation?.let(::finishOperation)
         deviceInfoOperation = null
     }
+
+    override fun clearScannerCache(
+        deviceId: String,
+        completion: (InateckCacheOutcome) -> Unit,
+    ): Boolean {
+        val device = activeDevice?.takeIf { it.mac == deviceId } ?: return false
+        val attempt = connectionAttempt
+        val operation = beginOperation(device, attempt) ?: return false
+        cacheOperation = operation
+        fun finish(outcome: InateckCacheOutcome) {
+            if (!isCurrentOperation(device, attempt, operation)) return
+            finishOperation(operation)
+            cacheOperation = null
+            completion(outcome)
+        }
+        // Count, erase only when something is stored, then count again. The
+        // three commands share the settings characteristic, so they run one
+        // after another inside a single gated operation. Only counts leave
+        // this function: the stored reads themselves are never requested.
+        return runCatching {
+            device.messager.getInventoryNum { counted ->
+                dispatch {
+                    if (!isCurrentOperation(device, attempt, operation)) return@dispatch
+                    val stored = counted.getOrNull()
+                    if (stored == null || stored <= 0) {
+                        finish(InateckCacheOutcome(stored))
+                        return@dispatch
+                    }
+                    runCatching {
+                        device.messager.inventoryClearCache { cleared ->
+                            dispatch {
+                                if (!isCurrentOperation(device, attempt, operation)) return@dispatch
+                                if (cleared.isFailure) {
+                                    finish(InateckCacheOutcome(stored, cleared = false))
+                                    return@dispatch
+                                }
+                                runCatching {
+                                    device.messager.getInventoryNum { recounted ->
+                                        dispatch {
+                                            finish(
+                                                InateckCacheOutcome(
+                                                    stored,
+                                                    cleared = true,
+                                                    remaining = recounted.getOrNull(),
+                                                ),
+                                            )
+                                        }
+                                    }
+                                }.onFailure { finish(InateckCacheOutcome(stored, cleared = true)) }
+                            }
+                        }
+                    }.onFailure { finish(InateckCacheOutcome(stored, cleared = false)) }
+                }
+            }
+            true
+        }.getOrElse {
+            finishOperation(operation)
+            cacheOperation = null
+            false
+        }
+    }
+
+    override fun abandonCacheClear() {
+        cacheOperation?.let(::finishOperation)
+        cacheOperation = null
+    }
+
+    override fun reportedDataModes(): InateckDataModes? = dataModes
 
     override fun setGattModeListener(listener: ((InateckGattModeEvent) -> Unit)?) {
         gattModeListener = listener
@@ -977,6 +1049,7 @@ internal class AndroidInateckSdkGateway(
         clearPendingScanFrame()
         invalidateOperations()
         activeDevice = null
+        dataModes = null
         pendingDevice = null
         activeScanBytes = null
         activeDisconnect = null
