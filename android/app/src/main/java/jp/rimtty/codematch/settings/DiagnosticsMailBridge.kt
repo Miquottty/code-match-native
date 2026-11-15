@@ -62,10 +62,17 @@ internal object DiagnosticsMailBridge {
      * `ACTION_SEND` with the mail fields and the attachment, restricted to
      * mail apps through a `mailto:` selector, exactly like the report mail
      * (`HistoryPdfBridge.createMailIntent`).
+     *
+     * The intent deliberately has NO MIME type. Android resolves an intent
+     * that has a selector by the selector's action and data but with the
+     * outer intent's type, and a `mailto:` filter declares no type, so a
+     * typed intent matches no mail app at all: the resolver check failed and
+     * every hand-off fell back to the share sheet (seen on a Pixel 7 with
+     * Gmail, 2026-11-15). The mail app reads the attachment's type from the
+     * content URI.
      */
     internal fun createMailIntent(uri: Uri, mail: DiagnosticsMail): Intent =
         Intent(Intent.ACTION_SEND).apply {
-            type = DiagnosticsMailContent.MIME_TYPE
             putExtra(Intent.EXTRA_EMAIL, DiagnosticsMailContent.recipients)
             putExtra(Intent.EXTRA_SUBJECT, mail.subject)
             putExtra(Intent.EXTRA_TEXT, mail.body)

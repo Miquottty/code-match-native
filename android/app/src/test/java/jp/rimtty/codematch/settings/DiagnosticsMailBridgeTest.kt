@@ -47,7 +47,9 @@ class DiagnosticsMailBridgeTest {
         val intent = DiagnosticsMailBridge.createMailIntent(uri, mail)
 
         assertEquals(Intent.ACTION_SEND, intent.action)
-        assertEquals("text/plain", intent.type)
+        // No MIME type: a typed intent with a mailto selector resolves to no
+        // mail app on a device, which sent every hand-off to the share sheet.
+        assertNull(intent.type)
         assertEquals(
             listOf("contact-codematch@googlegroups.com"),
             intent.getStringArrayExtra(Intent.EXTRA_EMAIL)?.toList(),

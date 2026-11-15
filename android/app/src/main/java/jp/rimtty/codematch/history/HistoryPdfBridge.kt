@@ -233,9 +233,15 @@ internal object HistoryPdfBridge {
      * `ACTION_SEND` carrying the PDF plus the mail fields, restricted to mail
      * apps through a `mailto:` selector. The system resolver lets the operator
      * pin one mail app ("always") when several are installed.
+     *
+     * The intent deliberately has NO MIME type: with a selector Android still
+     * matches the outer intent's type against the `mailto:` filter, which
+     * declares none, so a typed intent resolves to no mail app and the
+     * hand-off always fell back to the share chooser (see
+     * `DiagnosticsMailBridge.createMailIntent`). The mail app reads the PDF
+     * type from the content URI.
      */
     internal fun createMailIntent(uri: Uri, mail: ReportMail): Intent = Intent(Intent.ACTION_SEND).apply {
-        type = PDF_MIME_TYPE
         putExtra(Intent.EXTRA_EMAIL, ReportMailContent.recipients)
         putExtra(Intent.EXTRA_SUBJECT, mail.subject)
         putExtra(Intent.EXTRA_TEXT, mail.body)
