@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import jp.rimtty.codematch.core.data.CodeMatchDatabase
@@ -26,6 +27,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.TimeoutCancellationException
@@ -85,7 +87,7 @@ class ScanViewModelCheckpointInstrumentationTest {
                 persisted?.phase,
             )
 
-            firstOwner.viewModelStore.clear()
+            firstOwner.clearAndJoin()
             firstOwner = null
             fixture.reopenDatabase()
 
@@ -100,8 +102,8 @@ class ScanViewModelCheckpointInstrumentationTest {
             assertEquals(jp.rimtty.codematch.scanner.api.ScanFormat.CODE_128, restored.expectedFormat)
             assertEquals(0, restored.matchedCount)
         } finally {
-            secondOwner?.viewModelStore?.clear()
-            firstOwner?.viewModelStore?.clear()
+            secondOwner?.clearAndJoin()
+            firstOwner?.clearAndJoin()
             fixture.close()
         }
     }
@@ -153,7 +155,7 @@ class ScanViewModelCheckpointInstrumentationTest {
                 fixture.history.getScanCheckpoint(sessionId)?.result,
             )
         } finally {
-            owner?.viewModelStore?.clear()
+            owner?.clearAndJoin()
             fixture.close()
         }
     }
@@ -196,7 +198,7 @@ class ScanViewModelCheckpointInstrumentationTest {
             val persisted = awaitCheckpoint(fixture.history, sessionId, densoQrPayload)
             assertEquals(Destination.DENSO, persisted?.destination)
 
-            firstOwner.viewModelStore.clear()
+            firstOwner.clearAndJoin()
             firstOwner = null
             fixture.reopenDatabase()
 
@@ -236,8 +238,8 @@ class ScanViewModelCheckpointInstrumentationTest {
                 fixture.history.activeSession.first { it?.id == sessionId }?.destination,
             )
         } finally {
-            secondOwner?.viewModelStore?.clear()
-            firstOwner?.viewModelStore?.clear()
+            secondOwner?.clearAndJoin()
+            firstOwner?.clearAndJoin()
             fixture.close()
         }
     }
@@ -280,7 +282,7 @@ class ScanViewModelCheckpointInstrumentationTest {
             val persisted = awaitCheckpoint(fixture.history, sessionId, moltenQrPayload)
             assertEquals(Destination.MOLTEN, persisted?.destination)
 
-            firstOwner.viewModelStore.clear()
+            firstOwner.clearAndJoin()
             firstOwner = null
             fixture.reopenDatabase()
 
@@ -320,8 +322,8 @@ class ScanViewModelCheckpointInstrumentationTest {
                 fixture.history.activeSession.first { it?.id == sessionId }?.destination,
             )
         } finally {
-            secondOwner?.viewModelStore?.clear()
-            firstOwner?.viewModelStore?.clear()
+            secondOwner?.clearAndJoin()
+            firstOwner?.clearAndJoin()
             fixture.close()
         }
     }
@@ -355,6 +357,26 @@ class ScanViewModelCheckpointInstrumentationTest {
 
     private class TestViewModelOwner : ViewModelStoreOwner {
         override val viewModelStore = ViewModelStore()
+
+        /** The scope job of the ViewModel this owner holds, recorded when it is created. */
+        var viewModelJob: Job? = null
+
+        /**
+         * Clear the ViewModel and wait until its coroutines have really ended.
+         *
+         * `clear()` only cancels: a Room transaction the ViewModel had in
+         * flight (checkpoint, scan log) unwinds a moment later. Closing the
+         * database in that moment leaves the transaction open on a connection
+         * nobody owns any more, and the file stays write-locked — the next
+         * instance of the same file then fails its first write with
+         * SQLITE_BUSY and the new ViewModel never initializes (#140: 8 of 25
+         * runs on an emulator; none once the job is joined first). A process
+         * death, which this test stands in for, has no such window.
+         */
+        suspend fun clearAndJoin() {
+            viewModelStore.clear()
+            viewModelJob?.let { job -> withTimeout(10_000L) { job.join() } }
+        }
     }
 
     private class IsolatedScanFixture private constructor(
@@ -382,7 +404,9 @@ class ScanViewModelCheckpointInstrumentationTest {
                     ) as T
                 }
             }
-            return owner to ViewModelProvider(owner, factory)[ScanViewModel::class.java]
+            val viewModel = ViewModelProvider(owner, factory)[ScanViewModel::class.java]
+            owner.viewModelJob = viewModel.viewModelScope.coroutineContext.job
+            return owner to viewModel
         }
 
         fun reopenDatabase() {
