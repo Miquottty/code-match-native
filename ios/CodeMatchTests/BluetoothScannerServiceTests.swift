@@ -898,8 +898,8 @@ final class BluetoothScannerServiceTests: XCTestCase {
     }
 
     func testTuningProfileAlignsBufferSettingsOnlyWhereTheScannerReportsThem() throws {
-        // 公式アプリで見たBCST-36の初期状態（#155）。何もバッファーを消さないので、
-        // 未接続中の読み取りがたまり続ける。
+        // 公式アプリで見たBCST-36の初期状態（#155）。チューニングの対象はすべて初期値と同じなので、
+        // 何も書かない。たまった読み取りは接続のたびに件数を読んで消す。
         let factory = """
         {"status":0,"data":[
           {"area":"50","name":"inventory_mode","value":"0"},
@@ -908,23 +908,7 @@ final class BluetoothScannerServiceTests: XCTestCase {
           {"area":"53","name":"d_click_upload_flag","value":"1"}
         ]}
         """
-        let differences = BluetoothScannerService.tuningDifferences(settings: factory)
-        XCTAssertEqual(
-            differences,
-            [
-                BluetoothScannerService.TuningItem(name: "start_up_clean_cache", value: 1),
-                BluetoothScannerService.TuningItem(name: "d_click_upload_flag", value: 0)
-            ]
-        )
-        let command = try XCTUnwrap(
-            BluetoothScannerService.tuningCommand(settings: factory, items: differences)
-        )
-        let items = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(command.utf8)) as? [[String: String]]
-        )
-        XCTAssertEqual(items.count, 2)
-        XCTAssertTrue(items.contains(["area": "51", "name": "start_up_clean_cache", "value": "1"]))
-        XCTAssertTrue(items.contains(["area": "53", "name": "d_click_upload_flag", "value": "0"]))
+        XCTAssertTrue(BluetoothScannerService.tuningDifferences(settings: factory).isEmpty)
         XCTAssertEqual(
             BluetoothScannerService.scannerDataModesSummary(settings: factory),
             "Scanner data modes: inventory=0 autoUpload=0 clearAtStartup=0 doubleClick=1"
@@ -944,25 +928,35 @@ final class BluetoothScannerServiceTests: XCTestCase {
             ]
         )
 
-        // BCST-36（V2.6.16）は綴りが`dclick_upload_flag`。どちらの綴りでも同じ扱いにする。
-        let bcst36 = """
+        // #156のビルドが書いた状態のBCST-36（V2.6.16、綴りは`dclick_upload_flag`）。電源ON時の
+        // バッファー消去がONのまま電池で起動し直すと読み取れなくなる（#162）ので、OFFに戻す。
+        // ダブルクリックでのアップロードには触れない。
+        let writtenBy156 = """
         {"status":0,"data":[
-          {"area":"50","name":"inventory_mode","value":"1"},
+          {"area":"50","name":"inventory_mode","value":"0"},
           {"area":"51","name":"start_up_clean_cache","value":"1"},
           {"area":"52","name":"auto_upload_cache","value":"0"},
-          {"area":"54","name":"dclick_upload_flag","value":"1"}
+          {"area":"54","name":"dclick_upload_flag","value":"0"}
         ]}
         """
+        let differences = BluetoothScannerService.tuningDifferences(settings: writtenBy156)
         XCTAssertEqual(
-            BluetoothScannerService.tuningDifferences(settings: bcst36),
-            [
-                BluetoothScannerService.TuningItem(name: "inventory_mode", value: 0),
-                BluetoothScannerService.TuningItem(name: "dclick_upload_flag", value: 0)
-            ]
+            differences,
+            [BluetoothScannerService.TuningItem(name: "start_up_clean_cache", value: 0)]
         )
+        let command = try XCTUnwrap(
+            BluetoothScannerService.tuningCommand(settings: writtenBy156, items: differences)
+        )
+        let items = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(command.utf8)) as? [[String: String]]
+        )
+        XCTAssertEqual(items, [["area": "51", "name": "start_up_clean_cache", "value": "0"]])
         XCTAssertEqual(
-            BluetoothScannerService.scannerDataModesSummary(settings: bcst36),
-            "Scanner data modes: inventory=1 autoUpload=0 clearAtStartup=1 doubleClick=1"
+            BluetoothScannerService.scannerDataModesSummary(settings: writtenBy156),
+            "Scanner data modes: inventory=0 autoUpload=0 clearAtStartup=1 doubleClick=0"
+        )
+        XCTAssertFalse(
+            BluetoothScannerService.tuningProfile.contains { $0.name.contains("click_upload_flag") }
         )
 
         // キャッシュ管理を持たない機種はどの項目も報告しない。何も書かない。

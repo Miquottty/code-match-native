@@ -24,6 +24,8 @@ final class InateckNotificationBridge {
         void onReady();
         void onFailure();
         void onCommandTraffic();
+        /** A notification the SDK's running command will parse; the bytes are a copy. */
+        void onCommandBytes(byte[] value);
         void onBytes(byte[] value);
     }
 
@@ -61,6 +63,7 @@ final class InateckNotificationBridge {
                                 .getTaskManager$ble_release()
                                 .getRunningTask() != null) {
                             callback.onCommandTraffic();
+                            callback.onCommandBytes(safeCopy.clone());
                             // Preserve the SDK's command parser for auth/settings
                             // replies without retaining its raw-byte Logcat call.
                             device.getMessager()

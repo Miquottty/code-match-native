@@ -156,14 +156,23 @@ HPRT-4F5F（2026-09-05）で確定したinventory nameと汎用flagの対応:
 
 スキャナは未接続中の読み取りを本体にため、満杯になるとすべての読み取りを拒否します。BCST-36を1〜2か月運用して読めなくなった報告を受け、次の2つを入れています。
 
-- 読取チューニングのプロファイルに、バッファー関連の4項目を追加しました。方式はほかの項目と同じです（inventoryにある項目だけ、差分だけ、再取得で確認）。
+- 読取チューニングのプロファイルに、バッファー関連の3項目を入れています。いずれも工場出荷値で、方式はほかの項目と同じです（inventoryにある項目だけ、差分だけ、再取得で確認）。
 
 | 目的 | inventory name | 汎用flag | 値 |
 |---|---|---|---|
 | 棚卸モード | `inventory_mode` | 1013 | 0（OFF） |
-| 電源ON時のバッファー消去 | `start_up_clean_cache` | 1015 | 1（ON） |
 | 接続時の自動アップロード | `auto_upload_cache` | 1016 | 0（OFF） |
-| ダブルクリックでアップロード | `d_click_upload_flag`（BCST-36は`dclick_upload_flag`。どちらも対象） | 1014 | 0（OFF） |
+| 電源ON時のバッファー消去 | `start_up_clean_cache` | 1015 | 0（OFF。ONにしない） |
+
+ダブルクリックでのアップロード（`d_click_upload_flag`、BCST-36は`dclick_upload_flag`、汎用flag 1014）は対象にしていません。診断ログの`doubleClick=`に値が出るだけです。
+
+**電源ON時のバッファー消去をONにしない理由（#162）。** #156はこの項目を1（ON）にしていましたが、ONにしたBCST-36（`BCST-36 V2.6.16 AI JP` / `OTA_D_V0.3.7`）は、電池で起動し直した後に次の状態になりました（2026-11-15〜16、実機）。
+
+- トリガーを引いても読み取りが始まらない（アプリを終了しても同じ）。
+- 接続直後の数秒、読み出しコマンドにデータ0バイトの応答を返す（設定の読み出しは`f2 02 7f 80 f3`）。SDKはこれを`{"status":0,"data":[]}`（22文字・0件）として返します。
+- USBに挿すと読める状態に戻り、SDKの電池値が250になる。この状態はUSBを抜いても続き、電源を入れ直すと電池値100に戻って再び読めなくなる。
+
+同じ夜の診断ログでは、ONを書いてから電源を入れ直した後の「ON かつ 電池で起動（電池値100）」の接続は13回すべて読めず、「ON かつ USBで起動（電池値250）」と「OFF かつ 電池で起動」は正常でした。ONを書いた直後は、電源を入れ直すまで正常に読めます。公式アプリでこの項目だけをOFFにして電源を入れ直すと読めるようになり、そのとき`dclick_upload_flag`は0のままだったので、原因はこの項目です。プロファイルは0（OFF）を明示して持つので、ONにされたスキャナは次の接続でOFFに戻ります。効くのは次に電源を入れ直した後です。
 
 - 版・電池の読み出しの後、接続ごとに1回`clearScannerCacheIfNeeded`を実行します。`getInventoryNum`で件数を読み、1件以上なら`inventoryClearCache`で消去し、もう一度件数を読みます。設定コマンドのゲートを通し、6秒応答がなければ接続は閉じずに打ち切ります。
 
@@ -178,7 +187,7 @@ HPRT-4F5F（2026-09-05）で確定したinventory nameと汎用flagの対応:
 | `Scanner cache check timed out` | 6秒以内に終わらなかった |
 | `Scanner data modes: inventory=… autoUpload=… clearAtStartup=… doubleClick=…` | 書き込み前にスキャナが報告した値。`unknown`はその機種が項目を持たない |
 
-SDKのドキュメントは棚卸のAPIを「USB接続が前提」と書いていますが、iOS・AndroidのSDKはどちらもBluetooth接続用のクラスにこのAPIを持っています。実機で確認できているのはBCST-36だけで、ほかの機種は利用者の診断ログで確認します。BCST-36（広告名`HPRT-4F5F`、`BCST-36 V2.6.16 AI JP`）では、2026-11-15にiPhone 16 Pro Maxで`start_up_clean_cache`の書き込み、棚卸モードのOFFへの書き戻し、`Scanner cache: 2 stored, cleared, 0 remain`、修正後の照合（一致）を確認しました。電源を入れ直したときに0件へ戻るか（`start_up_clean_cache`の効き）は未確認です。
+SDKのドキュメントは棚卸のAPIを「USB接続が前提」と書いていますが、iOS・AndroidのSDKはどちらもBluetooth接続用のクラスにこのAPIを持っています。実機で確認できているのはBCST-36だけで、ほかの機種は利用者の診断ログで確認します。BCST-36（広告名`HPRT-4F5F`、`BCST-36 V2.6.16 AI JP`）では、2026-11-15にiPhone 16 Pro Maxで棚卸モードのOFFへの書き戻し、`Scanner cache: 2 stored, cleared, 0 remain`、修正後の照合（一致）を確認しました。
 
 ## 6. 次の拡張候補
 
