@@ -228,6 +228,8 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     static let diagnosticEventLimit = 1000
     /// 診断用の読み出し（版・電池残量）を待つ上限。超えても接続は閉じず先へ進む。
     static let scannerInfoQueryTimeout: Duration = .seconds(4)
+    /// 内蔵バッファーの件数取得→消去→再取得を待つ上限。超えても接続は閉じず先へ進む。
+    static let scannerCacheCheckTimeout: Duration = .seconds(6)
     static let diagnosticDisplayLimit = 20
     static let settingsRetryLimit = 4
     /// 読み取り設定の書込が失敗したときに、同じ要求を再送する回数。
@@ -268,7 +270,17 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         TuningItem(name: "datamatrix_read_phase", value: 0),
         TuningItem(name: "hanxin_read_phase", value: 0),
         TuningItem(name: "pdf417_read_phase", value: 0),
-        TuningItem(name: "auto_close_mode", value: 20)
+        TuningItem(name: "auto_close_mode", value: 20),
+        // 内蔵バッファーを満杯にしないための設定（#155）。スキャナーは未接続中の読み取りを
+        // 本体にため、満杯になるとすべての読み取りを拒否する。棚卸モードは使わず、電源を
+        // 入れるたびに消し、たまった読み取りをアプリへ流し込ませない。
+        TuningItem(name: "inventory_mode", value: 0),
+        TuningItem(name: "start_up_clean_cache", value: 1),
+        TuningItem(name: "auto_upload_cache", value: 0),
+        // ダブルクリックでのアップロードは機種でnameの綴りが違う（BCST-36は`dclick_upload_flag`）。
+        // 報告された方だけが対象になる。
+        TuningItem(name: "d_click_upload_flag", value: 0),
+        TuningItem(name: "dclick_upload_flag", value: 0)
     ]
 
     @Published private(set) var devices: [BluetoothScannerDevice] = []
@@ -290,6 +302,8 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     private var lastDeliveredCode: (value: String, date: Date)?
     /// 診断用: この接続で版・電池残量を読み出したか。接続のたびに1回だけ読む。
     private var scannerInfoQueried = false
+    /// この接続で内蔵バッファーの件数確認と消去を済ませたか。接続のたびに1回だけ行う（#155）。
+    private var scannerCacheChecked = false
     private var lastScannerVersion: String?
     private var lastScannerHardware: String?
     private var lastScannerBattery: (percent: Int, date: Date)?
@@ -648,6 +662,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                     self.pendingIlluminationRequest = nil
                     self.tuningState = .unknown
                     self.scannerInfoQueried = false
+                    self.scannerCacheChecked = false
                     self.lastScannerVersion = nil
                     self.lastScannerHardware = nil
                     self.lastScannerBattery = nil
@@ -1051,6 +1066,34 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         }
     }
 
+    /// 内蔵バッファーの確認結果を診断ログ用の1行にする。件数と結果だけで、読み取り値は含めない。
+    /// 文言はAndroid（`InateckCacheOutcome.diagnosticLine`）と同じ。
+    static func scannerCacheSummary(stored: Int?, cleared: Bool = false, remaining: Int? = nil) -> String {
+        guard let stored else { return "Scanner cache: unavailable" }
+        guard stored > 0 else { return "Scanner cache: 0 stored" }
+        guard cleared else { return "Scanner cache: \(stored) stored, clear failed" }
+        guard let remaining else { return "Scanner cache: \(stored) stored, cleared, remain unknown" }
+        return "Scanner cache: \(stored) stored, cleared, \(remaining) remain"
+    }
+
+    /// バッファー関連の設定値（書き込み前にスキャナーが報告した値）を診断ログ用の1行にする。
+    /// スキャナーが持たない項目は`unknown`。文言はAndroid（`InateckDataModes`）と同じ。
+    static func scannerDataModesSummary(settings: String) -> String {
+        var current: [String: Int] = [:]
+        for item in scannerSettingItems(from: settings) ?? [] {
+            guard let name = item["name"] as? String,
+                  let value = integerSettingValue(item["value"]) else { continue }
+            current[name] = value
+        }
+        func text(_ name: String) -> String {
+            current[name].map(String.init) ?? "unknown"
+        }
+        return "Scanner data modes: inventory=\(text("inventory_mode")) "
+            + "autoUpload=\(text("auto_upload_cache")) "
+            + "clearAtStartup=\(text("start_up_clean_cache")) "
+            + "doubleClick=\(current["d_click_upload_flag"] != nil ? text("d_click_upload_flag") : text("dclick_upload_flag"))"
+    }
+
     private func lastBatteryNote() -> String {
         guard let battery = lastScannerBattery else { return "" }
         let age = Int(now().timeIntervalSince(battery.date))
@@ -1395,14 +1438,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                 trace("Scanner tuning values: \(tuning.sorted().joined(separator: ","))")
             }
         }
-        let inventoryMode = Self.settingValue(named: "inventory_mode", from: settings)
-        let automaticCacheUpload = Self.settingValue(named: "auto_upload_cache", from: settings)
-        let clearCacheAtStartup = Self.settingValue(named: "start_up_clean_cache", from: settings)
-        trace(
-            "Scanner data modes: inventory=\(inventoryMode.map(String.init) ?? "unknown") "
-                + "autoUpload=\(automaticCacheUpload.map(String.init) ?? "unknown") "
-                + "clearAtStartup=\(clearCacheAtStartup.map(String.init) ?? "unknown")"
-        )
+        trace(Self.scannerDataModesSummary(settings: settings))
         guard let mode = Self.bluetoothMode(from: settings) else {
             trace("Could not determine the scanner Bluetooth mode")
             startSymbologyConfiguration(deviceID: sdkDevice.uuid)
@@ -1809,8 +1845,11 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     /// 設定コマンドのゲートを通すが、診断用の読み出しなので応答がなくても接続は閉じず、
     /// 打ち切って先へ進む。読み取り設定・照明・チューニングが済んだ後にだけ行う。
     private func queryScannerInfoIfNeeded() {
-        guard !scannerInfoQueried,
-              tuningState != .unknown,
+        guard !scannerInfoQueried else {
+            clearScannerCacheIfNeeded()
+            return
+        }
+        guard tuningState != .unknown,
               tuningState != .applying,
               let sdkDevice = connectedSDKDevice,
               isConnected,
@@ -1863,7 +1902,15 @@ final class BluetoothScannerService: NSObject, ObservableObject {
     }
 
     private func finishScannerInfoQuery(_ generation: Int, message: String) {
-        guard generation == settingCommandGeneration else { return }
+        guard finishSoftCommand(generation, message: message) else { return }
+        clearScannerCacheIfNeeded()
+    }
+
+    /// 応答がなくても接続を閉じない補助コマンド（版・電池の読み出し、内蔵バッファーの確認）を
+    /// 終え、待たせていた設定処理を再開する。世代が違う（すでに終えた）ときは何もせず false。
+    @discardableResult
+    private func finishSoftCommand(_ generation: Int, message: String) -> Bool {
+        guard generation == settingCommandGeneration else { return false }
         settingCommandTimeoutTask?.cancel()
         settingCommandTimeoutTask = nil
         // 打ち切った後に届く応答はgeneration不一致で破棄する。
@@ -1876,6 +1923,85 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         if !settingCommandInFlight, let pending = pendingIlluminationRequest {
             pendingIlluminationRequest = nil
             setIllumination(pending)
+        }
+        return true
+    }
+
+    /// スキャナーは未接続中の読み取りを内蔵バッファーにため、満杯になるとすべての読み取りを
+    /// 拒否する（#155）。このアプリはその読み取りを使わないので、接続のたびに1回、件数を
+    /// 読んで1件以上なら消去し、件数を読み直して確認する。版・電池の読み出しと同じく設定
+    /// コマンドのゲートを通し、応答がなくても接続は閉じずに打ち切る。診断へは件数だけを残す。
+    private func clearScannerCacheIfNeeded() {
+        guard !scannerCacheChecked,
+              scannerInfoQueried,
+              let sdkDevice = connectedSDKDevice,
+              isConnected,
+              configurationState == .ready,
+              !settingCommandInFlight,
+              !manualDisconnectInProgress else { return }
+
+        scannerCacheChecked = true
+        settingCommandGeneration += 1
+        let generation = settingCommandGeneration
+        settingCommandInFlight = true
+        settingCommandTimeoutTask?.cancel()
+        settingCommandTimeoutTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: Self.scannerCacheCheckTimeout)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, let self else { return }
+            self.finishSoftCommand(generation, message: "Scanner cache check timed out")
+        }
+
+        let manager = sdkDevice.messageManager
+        manager.getInventoryNum { [weak self] counted in
+            Task { @MainActor in
+                guard let self, generation == self.settingCommandGeneration else { return }
+                guard case .success(let stored) = counted else {
+                    var message = Self.scannerCacheSummary(stored: nil)
+                    if case .failure(let error) = counted {
+                        message += " (\(Self.diagnosticDescription(error)))"
+                    }
+                    self.finishSoftCommand(generation, message: message)
+                    return
+                }
+                guard stored > 0 else {
+                    self.finishSoftCommand(
+                        generation,
+                        message: Self.scannerCacheSummary(stored: stored)
+                    )
+                    return
+                }
+                manager.inventoryClearCache { [weak self] cleared in
+                    Task { @MainActor in
+                        guard let self, generation == self.settingCommandGeneration else { return }
+                        if case .failure(let error) = cleared {
+                            self.finishSoftCommand(
+                                generation,
+                                message: Self.scannerCacheSummary(stored: stored, cleared: false)
+                                    + " (\(Self.diagnosticDescription(error)))"
+                            )
+                            return
+                        }
+                        manager.getInventoryNum { [weak self] recounted in
+                            Task { @MainActor in
+                                guard let self,
+                                      generation == self.settingCommandGeneration else { return }
+                                self.finishSoftCommand(
+                                    generation,
+                                    message: Self.scannerCacheSummary(
+                                        stored: stored,
+                                        cleared: true,
+                                        remaining: try? recounted.get()
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -2712,7 +2838,8 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         "hanxin_read_phase", "pdf417_read_phase",
         "scan_mode", "auto_close_mode", "time_auto_off", "time_continuous_mode", "auto_off",
         "auto_sense_distan", "security_level", "repeat_data_check_on", "ignore_short_bar",
-        "data_transmission_speed", "inventory_mode", "auto_upload_cache", "start_up_clean_cache"
+        "data_transmission_speed", "inventory_mode", "auto_upload_cache", "start_up_clean_cache",
+        "d_click_upload_flag", "dclick_upload_flag"
     ]
 
     private static let legacySymbologySettingNames: Set<String> = [

@@ -799,6 +799,115 @@ final class BluetoothScannerServiceTests: XCTestCase {
         XCTAssertNil(BluetoothScannerService.tuningItemsPresent(in: "not json"))
     }
 
+    func testTuningProfileAlignsBufferSettingsOnlyWhereTheScannerReportsThem() throws {
+        // 公式アプリで見たBCST-36の初期状態（#155）。何もバッファーを消さないので、
+        // 未接続中の読み取りがたまり続ける。
+        let factory = """
+        {"status":0,"data":[
+          {"area":"50","name":"inventory_mode","value":"0"},
+          {"area":"51","name":"start_up_clean_cache","value":"0"},
+          {"area":"52","name":"auto_upload_cache","value":"0"},
+          {"area":"53","name":"d_click_upload_flag","value":"1"}
+        ]}
+        """
+        let differences = BluetoothScannerService.tuningDifferences(settings: factory)
+        XCTAssertEqual(
+            differences,
+            [
+                BluetoothScannerService.TuningItem(name: "start_up_clean_cache", value: 1),
+                BluetoothScannerService.TuningItem(name: "d_click_upload_flag", value: 0)
+            ]
+        )
+        let command = try XCTUnwrap(
+            BluetoothScannerService.tuningCommand(settings: factory, items: differences)
+        )
+        let items = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(command.utf8)) as? [[String: String]]
+        )
+        XCTAssertEqual(items.count, 2)
+        XCTAssertTrue(items.contains(["area": "51", "name": "start_up_clean_cache", "value": "1"]))
+        XCTAssertTrue(items.contains(["area": "53", "name": "d_click_upload_flag", "value": "0"]))
+        XCTAssertEqual(
+            BluetoothScannerService.scannerDataModesSummary(settings: factory),
+            "Scanner data modes: inventory=0 autoUpload=0 clearAtStartup=0 doubleClick=1"
+        )
+
+        let inventoryModeLeftOn = """
+        {"status":0,"data":[
+          {"area":"50","name":"inventory_mode","value":"1"},
+          {"area":"52","name":"auto_upload_cache","value":"1"}
+        ]}
+        """
+        XCTAssertEqual(
+            BluetoothScannerService.tuningDifferences(settings: inventoryModeLeftOn),
+            [
+                BluetoothScannerService.TuningItem(name: "inventory_mode", value: 0),
+                BluetoothScannerService.TuningItem(name: "auto_upload_cache", value: 0)
+            ]
+        )
+
+        // BCST-36（V2.6.16）は綴りが`dclick_upload_flag`。どちらの綴りでも同じ扱いにする。
+        let bcst36 = """
+        {"status":0,"data":[
+          {"area":"50","name":"inventory_mode","value":"1"},
+          {"area":"51","name":"start_up_clean_cache","value":"1"},
+          {"area":"52","name":"auto_upload_cache","value":"0"},
+          {"area":"54","name":"dclick_upload_flag","value":"1"}
+        ]}
+        """
+        XCTAssertEqual(
+            BluetoothScannerService.tuningDifferences(settings: bcst36),
+            [
+                BluetoothScannerService.TuningItem(name: "inventory_mode", value: 0),
+                BluetoothScannerService.TuningItem(name: "dclick_upload_flag", value: 0)
+            ]
+        )
+        XCTAssertEqual(
+            BluetoothScannerService.scannerDataModesSummary(settings: bcst36),
+            "Scanner data modes: inventory=1 autoUpload=0 clearAtStartup=1 doubleClick=1"
+        )
+
+        // キャッシュ管理を持たない機種はどの項目も報告しない。何も書かない。
+        let withoutCacheManagement = """
+        {"status":0,"data":[{"area":"7","name":"code128_on","value":"1"}]}
+        """
+        XCTAssertTrue(
+            BluetoothScannerService.tuningDifferences(settings: withoutCacheManagement).isEmpty
+        )
+        XCTAssertEqual(
+            BluetoothScannerService.scannerDataModesSummary(settings: withoutCacheManagement),
+            "Scanner data modes: inventory=unknown autoUpload=unknown "
+                + "clearAtStartup=unknown doubleClick=unknown"
+        )
+    }
+
+    func testScannerCacheSummaryReportsCountsOnly() {
+        XCTAssertEqual(
+            BluetoothScannerService.scannerCacheSummary(stored: nil),
+            "Scanner cache: unavailable"
+        )
+        XCTAssertEqual(
+            BluetoothScannerService.scannerCacheSummary(stored: 0),
+            "Scanner cache: 0 stored"
+        )
+        XCTAssertEqual(
+            BluetoothScannerService.scannerCacheSummary(stored: 3, cleared: true, remaining: 0),
+            "Scanner cache: 3 stored, cleared, 0 remain"
+        )
+        XCTAssertEqual(
+            BluetoothScannerService.scannerCacheSummary(stored: 3, cleared: true, remaining: 2),
+            "Scanner cache: 3 stored, cleared, 2 remain"
+        )
+        XCTAssertEqual(
+            BluetoothScannerService.scannerCacheSummary(stored: 3, cleared: true),
+            "Scanner cache: 3 stored, cleared, remain unknown"
+        )
+        XCTAssertEqual(
+            BluetoothScannerService.scannerCacheSummary(stored: 3, cleared: false),
+            "Scanner cache: 3 stored, clear failed"
+        )
+    }
+
     func testSimulatorTuningStateFollowsConnection() {
         let defaults = isolatedDefaults()
         let service = BluetoothScannerService(defaults: defaults)

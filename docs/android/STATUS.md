@@ -9,6 +9,7 @@
 - debug構成: `scanner/fake`のFake scannerで照合フローを駆動する。emulator・CIのinstrumentationはこの構成で実行する。
 - 接続対象: 採用SDKに対応するスキャナー。BCST-36（firmware `V2.6.16 AI JP`、Bluetooth `OTA_D_V0.3.7`）とHPRT-4F5Fは検証機種であり、機種の許可リストではない。
 - 接続時の機器設定（2026-09-06、#59）: 照明OFF（`lighting_lamp_control`=2、設定画面のトグルで読取中点灯へ）の確認後に、読取チューニング（多コード`*_read_more_code`/`*_read_multi`=0、反転`read_inverse_color`/`*_read_phase`=0、赤光消灯時間`auto_close_mode`=20≒4秒）をinventoryと比較し、差分のある項目だけを書いて再取得で確認する（PR #74）。値は機器側に保存され、切断時に復元しない。name/flag対応表は[`../ios/IMPLEMENTATION_GUIDE.md`](../ios/IMPLEMENTATION_GUIDE.md)。
+- 内蔵バッファーの消去（#155）: スキャナは未接続中の読み取りを本体にため、満杯になると読み取りを拒否する。読取チューニングに`inventory_mode`=0、`start_up_clean_cache`=1、`auto_upload_cache`=0、`d_click_upload_flag`=0（BCST-36の綴りは`dclick_upload_flag`）を追加し、機器情報の読み出しの後に接続ごとに1回、件数の取得→消去→再取得を行う（`InateckSdkGateway.clearScannerCache`、6秒で打ち切り、接続は閉じない）。診断ログへ`Scanner cache: …`と`Scanner data modes: …`を残す。2026-11-15にPixel 7 / BCST-36（広告名`HPRT-4F5F`）で、棚卸モードのOFFへの書き戻し、`dclick_upload_flag`=0の書き込み、`Scanner cache: 2 stored, cleared, 0 remain`、件数取得後も棚卸モードがOFFのままであること、修正後のQR→Code 128照合（不一致と一致）をユーザーが確認した。ほかの機種は利用者の診断ログで確認する。
 - 診断: BLE診断イベントを1,000件保持し、設定画面の「接続診断」から共有シートまたはSAF保存先へテキストで書き出せる（PR #76）。段階名と版情報のみで読取値は含まない。
 
 ## 到達点
