@@ -40,6 +40,8 @@ internal class AndroidInateckSdkGateway(
     private var connectionAttempt = 0L
     private val operationGate = InateckOperationGate()
     private var deviceInfoOperation: Long? = null
+    // Collects the version reply while the device-info read runs; see InateckVersionReply.
+    private var versionReply: InateckVersionReply? = null
     private var cacheOperation: Long? = null
     private var dataModes: InateckDataModes? = null
     private var disconnectingDevice: BleScannerDevice? = null
@@ -144,6 +146,7 @@ internal class AndroidInateckSdkGateway(
             pendingDevice = null
             activeDevice = device
             dataModes = null
+            versionReply = null
             if (!connectCompletionDelivered) {
                 connectCompletionDelivered = true
                 completion(Result.success(Unit))
@@ -445,10 +448,23 @@ internal class AndroidInateckSdkGateway(
                                 }
                             }
 
+                            override fun onCommandBytes(value: ByteArray) {
+                                dispatch {
+                                    if (isCurrentAttempt(device, attempt)) {
+                                        versionReply?.offer(value)
+                                    }
+                                }
+                            }
+
                             override fun onBytes(value: ByteArray) {
                                 val copy = value.clone()
                                 dispatch {
                                     if (!isCurrentAttempt(device, attempt)) {
+                                        return@dispatch
+                                    }
+                                    // The tail of a split version reply can arrive after the
+                                    // SDK finished that read; it is not scan data.
+                                    if (versionReply?.offer(copy) == true) {
                                         return@dispatch
                                     }
                                     if (outputSetupStarted && !outputHandshakeHandled) {
@@ -735,11 +751,17 @@ internal class AndroidInateckSdkGateway(
         val attempt = connectionAttempt
         val operation = beginOperation(device, attempt) ?: return false
         deviceInfoOperation = operation
+        val reply = InateckVersionReply()
+        versionReply = reply
         fun finish(info: InateckDeviceInfo) {
             if (!isCurrentOperation(device, attempt, operation)) return
             finishOperation(operation)
             deviceInfoOperation = null
-            completion(info)
+            if (versionReply === reply) versionReply = null
+            // SDK 2.0.0 parses only the first notification of the version
+            // reply, which Android's default MTU splits in two; by now the
+            // hardware and battery reads have let the rest arrive.
+            completion(info.copy(version = info.version ?: reply.version()))
         }
         // The three reads share the settings characteristic, so they run one
         // after another inside a single gated operation.
@@ -769,6 +791,7 @@ internal class AndroidInateckSdkGateway(
         }.getOrElse {
             finishOperation(operation)
             deviceInfoOperation = null
+            if (versionReply === reply) versionReply = null
             false
         }
     }
@@ -776,6 +799,7 @@ internal class AndroidInateckSdkGateway(
     override fun abandonDeviceInfoRead() {
         deviceInfoOperation?.let(::finishOperation)
         deviceInfoOperation = null
+        versionReply = null
     }
 
     override fun clearScannerCache(
@@ -1052,6 +1076,7 @@ internal class AndroidInateckSdkGateway(
     private fun clearConnectionCallbacks() {
         clearPendingScanFrame()
         invalidateOperations()
+        versionReply = null
         activeDevice = null
         dataModes = null
         pendingDevice = null
