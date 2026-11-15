@@ -950,6 +950,17 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                     )
                     return
                 }
+                // 空や不完全な応答を「照明に未対応」と決めつけない。未対応にすると設定画面から
+                // スイッチが消えるため、応答が乱れただけのときはやり直せる失敗として返す。
+                if Self.illuminationAvailability(in: settings) == .incomplete {
+                    self.finishIllumination(
+                        generation,
+                        state: .failed(failureMessage),
+                        message: "Illumination setting query returned an incomplete inventory "
+                            + "(\(Self.settingsShapeDescription(settings)))"
+                    )
+                    return
+                }
                 guard let setting = Self.illuminationSetting(from: settings),
                       let command = Self.illuminationCommand(settings: settings, enabled: enabled) else {
                     self.finishIllumination(
@@ -987,8 +998,10 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                                     return
                                 }
                                 // 再取得したinventoryはこの接続の最新値なので、後続の
-                                // チューニング差分判定にも使う。
-                                self.connectedScannerSettings = verifiedSettings
+                                // チューニング差分判定にも使う。不完全な応答では置き換えない。
+                                if Self.hasRequiredSymbologySettings(verifiedSettings) {
+                                    self.connectedScannerSettings = verifiedSettings
+                                }
                                 self.finishIllumination(
                                     generation,
                                     state: enabled ? .on : .off,
@@ -1793,6 +1806,17 @@ final class BluetoothScannerService: NSObject, ObservableObject {
                                 generation,
                                 state: .failed(failureMessage),
                                 message: "Scanner tuning readback failed"
+                            )
+                            return
+                        }
+                        // 空や不完全な再取得は差分ゼロに見える。「確認済み」とせず、
+                        // この接続の設定も置き換えない。
+                        guard Self.hasRequiredSymbologySettings(verifiedSettings) else {
+                            self.finishTuning(
+                                generation,
+                                state: .failed(failureMessage),
+                                message: "Scanner tuning readback returned an incomplete inventory "
+                                    + "(\(Self.settingsShapeDescription(verifiedSettings)))"
                             )
                             return
                         }
@@ -2719,6 +2743,22 @@ final class BluetoothScannerService: NSObject, ObservableObject {
 
     /// ON=0（読取中点灯）、OFF=2（常時消灯）。1（常時点灯）は提供しない。
     static func illuminationValue(enabled: Bool) -> Int { enabled ? 0 : 2 }
+
+    enum IlluminationAvailability: Equatable {
+        /// 照明の項目があり、書き込める。
+        case available
+        /// inventoryは揃っているが、照明の項目がない（未対応の機種）。
+        case unsupported
+        /// inventoryが空または不完全で、対応・未対応を判断できない。
+        case incomplete
+    }
+
+    /// 照明の項目が使えるかを、inventoryが揃っているかどうかと分けて判定する。
+    /// スキャナーの応答が乱れて空のinventoryが返ったときに、未対応と誤判定しないため。
+    static func illuminationAvailability(in settings: String) -> IlluminationAvailability {
+        if illuminationSetting(from: settings) != nil { return .available }
+        return hasRequiredSymbologySettings(settings) ? .unsupported : .incomplete
+    }
 
     static func illuminationCommand(settings: String, enabled: Bool) -> String? {
         guard let current = illuminationSetting(from: settings) else { return nil }

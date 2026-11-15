@@ -87,6 +87,19 @@ internal object InateckTuningSettings {
 
     fun confirmed(inventory: List<Map<String, String>>): Boolean =
         present(inventory).isNotEmpty() && differences(inventory).isEmpty()
+
+    /**
+     * Whether the scanner answered with its real inventory. A scanner whose
+     * command channel is disturbed (for example while another app is connected
+     * to it) answers with an empty list; that must not be read as "this model
+     * has none of the tuning items". Every supported scanner reports QR and
+     * Code 128, the same rule iOS uses.
+     */
+    fun isCompleteInventory(inventory: List<Map<String, String>>): Boolean =
+        REQUIRED_NAMES.all { required -> inventory.any { it["name"] == required } }
+
+    private val REQUIRED_NAMES = listOf("qrcode_on", "code128_on")
 }
 
-internal enum class InateckTuningOutcome { UNSUPPORTED, MATCHED, APPLIED, FAILED }
+/** [INCOMPLETE]: the inventory read came back empty or partial; ask again later. */
+internal enum class InateckTuningOutcome { UNSUPPORTED, MATCHED, APPLIED, FAILED, INCOMPLETE }

@@ -674,6 +674,10 @@ internal class AndroidInateckSdkGateway(
                         finish(InateckTuningOutcome.FAILED)
                         return@dispatch
                     }
+                    if (!InateckTuningSettings.isCompleteInventory(inventory)) {
+                        finish(InateckTuningOutcome.INCOMPLETE)
+                        return@dispatch
+                    }
                     dataModes = InateckDataModes.from(inventory)
                     if (InateckTuningSettings.present(inventory).isEmpty()) {
                         finish(InateckTuningOutcome.UNSUPPORTED)
