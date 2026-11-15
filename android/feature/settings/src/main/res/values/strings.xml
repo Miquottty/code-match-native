@@ -57,6 +57,7 @@
     <string name="settings_disconnect">切断</string>
     <string name="settings_reconnect">再接続</string>
     <string name="settings_reconnect_known_scanner">以前接続したスキャナに再接続</string>
+    <string name="settings_reconnect_paused_hint">このスキャナには自動で再接続しません。使うときは上のボタンを押してください。</string>
     <string name="settings_device_selected">選択中</string>
     <string name="settings_device_not_selected">未選択</string>
     <string name="settings_status_idle">未接続</string>

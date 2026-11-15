@@ -67,6 +67,9 @@ class SelectableBleExternalScanner(
     override val knownDevice: ScannerDevice?
         get() = if (closed) null else connectionCoordinator.knownDevice
 
+    override val isAutomaticReconnectPaused: Boolean
+        get() = !closed && connectionCoordinator.isOperatorDisconnected
+
     override val connectionState: ConnectionState
         get() = pendingSelection?.let { ConnectionState.Connecting(it) }
             ?: sessionCoordinator?.state?.connection?.asApiState()

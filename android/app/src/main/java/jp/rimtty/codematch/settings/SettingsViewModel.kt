@@ -164,6 +164,7 @@ class SettingsViewModel @Inject constructor(
             tuningState = scanner.tuningState,
             devices = scanner.devices,
             knownDevice = scanner.knownDevice,
+            automaticReconnectPaused = scanner.isAutomaticReconnectPaused,
             connectionState = connection,
             // A newly connected scanner becomes the selection, so a scanner that
             // returned under another identity is what Reconnect/Retry target.

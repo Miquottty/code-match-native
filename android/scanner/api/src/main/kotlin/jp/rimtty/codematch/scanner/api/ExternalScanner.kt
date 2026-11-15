@@ -71,6 +71,15 @@ interface ExternalScanner {
      */
     val knownDevice: ScannerDevice?
         get() = null
+
+    /**
+     * True while the adapter deliberately leaves [knownDevice] alone — the
+     * operator disconnected it and it stays disconnected until the operator
+     * connects again. The settings screen uses it to say why nothing happens
+     * while that scanner is in reach.
+     */
+    val isAutomaticReconnectPaused: Boolean
+        get() = false
     val illuminationState: IlluminationState
         get() = IlluminationState.UNSUPPORTED
 

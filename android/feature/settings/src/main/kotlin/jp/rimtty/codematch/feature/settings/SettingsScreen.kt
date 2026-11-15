@@ -1104,6 +1104,18 @@ private fun ScannerCard(
                         )
                     }
                 }
+                if (state.showsReconnectPausedHint) {
+                    // After Disconnect nothing reconnects by itself (#137);
+                    // say so, so the screen does not look stuck.
+                    Text(
+                        text = stringResource(R.string.settings_reconnect_paused_hint),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(SettingsTestTags.RECONNECT_PAUSED_HINT),
+                    )
+                }
             }
             Button(
                 onClick = {

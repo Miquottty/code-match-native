@@ -36,6 +36,9 @@ class FakeExternalScanner(
     private var nextSequence = 0L
     override var knownDevice: ScannerDevice? = null
         private set
+    // Like the real adapter: set by Disconnect, cleared by the next connect.
+    override var isAutomaticReconnectPaused: Boolean = false
+        private set
     private var lastDeliveredValue: String? = null
     private var lastDeliveredAt: Long? = null
     private var sessionConfigurationApplied = false
@@ -210,6 +213,7 @@ class FakeExternalScanner(
     override fun connect(device: ScannerDevice): Boolean {
         appendDevice(device)
         knownDevice = device
+        isAutomaticReconnectPaused = false
         forcedUnavailableReason?.let { reason ->
             transitionConfiguration(ConfigurationState.Unavailable)
             transitionConnection(ConnectionState.Unavailable(reason))
@@ -253,6 +257,7 @@ class FakeExternalScanner(
         lastDeliveredValue = null
         lastDeliveredAt = null
         transitionConfiguration(ConfigurationState.Unavailable)
+        isAutomaticReconnectPaused = knownDevice != null
         transitionConnection(ConnectionState.Idle)
         record(DiagnosticCategory.CONNECTION, "Scanner disconnected")
         return true

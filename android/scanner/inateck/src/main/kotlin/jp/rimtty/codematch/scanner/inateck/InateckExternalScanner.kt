@@ -473,6 +473,8 @@ class InateckExternalScanner private constructor(
     override val supportsConnectionControls: Boolean = true
     override val knownDevice: ScannerDevice?
         get() = delegate.knownDevice
+    override val isAutomaticReconnectPaused: Boolean
+        get() = delegate.isAutomaticReconnectPaused
     override val expectedFormat: ScanFormat?
         get() = delegate.expectedFormat
 

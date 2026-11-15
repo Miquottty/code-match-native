@@ -96,6 +96,29 @@ class SettingsUiStateTest {
     }
 
     @Test
+    fun reconnectPausedHintFollowsTheKnownScannerButton() {
+        val known = ScannerDevice(id = "known", name = "HPRT-4F5F")
+        // The operator disconnected: the scanner stays known, nothing
+        // reconnects by itself, and the screen says so under the button.
+        val paused = SettingsUiState(knownDevice = known, automaticReconnectPaused = true)
+        assertTrue(paused.showsReconnectPausedHint)
+        assertTrue(paused.copy(connectionState = ConnectionState.Searching).showsReconnectPausedHint)
+
+        // Not paused (e.g. the link dropped and a reconnect is being tried).
+        assertFalse(paused.copy(automaticReconnectPaused = false).showsReconnectPausedHint)
+        // No button, no hint: nothing remembered, connected, or a selection
+        // that Connect/Reconnect would target instead.
+        assertFalse(paused.copy(knownDevice = null).showsReconnectPausedHint)
+        assertFalse(
+            paused.copy(devices = listOf(known), connectionState = ConnectionState.Connected(known))
+                .showsReconnectPausedHint,
+        )
+        assertFalse(
+            paused.copy(devices = listOf(known), selectedDeviceId = known.id).showsReconnectPausedHint,
+        )
+    }
+
+    @Test
     fun knownScannerIsOfferedOnlyWhileNothingIsConnectedOrSelected() {
         val known = ScannerDevice(id = "known", name = "HPRT-4F5F")
         val other = ScannerDevice(id = "other", name = "HPRT-636E")

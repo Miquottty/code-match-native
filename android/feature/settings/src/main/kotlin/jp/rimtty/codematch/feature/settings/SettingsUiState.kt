@@ -59,6 +59,7 @@ object SettingsTestTags {
     const val RECONNECT_KNOWN = "settings_scanner_reconnect_known"
     const val CONNECT_REJECTED = "settings_scanner_connect_rejected"
     const val DISCONNECT_FIRST_HINT = "settings_scanner_disconnect_first_hint"
+    const val RECONNECT_PAUSED_HINT = "settings_scanner_reconnect_paused_hint"
     const val RETRY = "settings_scanner_retry"
     const val OPEN_BLUETOOTH_SETTINGS = "settings_scanner_open_bluetooth_settings"
     const val SCANNER_ISSUE = "settings_scanner_issue"
@@ -141,6 +142,11 @@ data class SettingsUiState(
      * switch). It may be absent from [devices], e.g. after a process restart.
      */
     val knownDevice: ScannerDevice? = null,
+    /**
+     * True while the adapter does not reconnect [knownDevice] on its own
+     * because the operator disconnected it (`ExternalScanner.isAutomaticReconnectPaused`).
+     */
+    val automaticReconnectPaused: Boolean = false,
 ) {
     /** Compatibility/readability aliases for hosts that name these values explicitly. */
     val appSettings: AppSettings get() = settings
@@ -182,6 +188,13 @@ data class SettingsUiState(
      */
     val knownScannerToReconnect: ScannerDevice?
         get() = knownDevice?.takeIf { !connectionState.isConnected && reconnectTarget == null }
+
+    /**
+     * Says that waiting will not bring the known scanner back: shown under its
+     * Reconnect button while automatic reconnect is paused (#137).
+     */
+    val showsReconnectPausedHint: Boolean
+        get() = automaticReconnectPaused && knownScannerToReconnect != null
 
     /** False only while that scanner is already being connected. */
     val canReconnectKnownScanner: Boolean

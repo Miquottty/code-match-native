@@ -57,6 +57,7 @@
     <string name="settings_disconnect">Disconnect</string>
     <string name="settings_reconnect">Reconnect</string>
     <string name="settings_reconnect_known_scanner">Reconnect the previous scanner</string>
+    <string name="settings_reconnect_paused_hint">This scanner is not reconnected automatically. Tap the button above when you want to use it.</string>
     <string name="settings_device_selected">Selected</string>
     <string name="settings_device_not_selected">Not selected</string>
     <string name="settings_status_idle">Not connected</string>
