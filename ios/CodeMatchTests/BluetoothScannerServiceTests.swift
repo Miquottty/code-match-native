@@ -557,6 +557,77 @@ final class BluetoothScannerServiceTests: XCTestCase {
         )
     }
 
+    /// 接続中に検索を頼まれても、接続済みの状態と一覧を書き換えない（#137）。
+    /// 実機では検索が`state`だけを未接続へ戻し、リンクは残ったまま選び直しも
+    /// 読み取りも受け付けなくなった。
+    func testDiscoveryWhileConnectedKeepsTheConnectionAndStaysReadyForScanning() {
+        let defaults = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let service = BluetoothScannerService(defaults: defaults)
+        service.startDiscovery()
+        let device = service.devices[0]
+        service.connectSelectedDevice(device)
+        service.setExpectedCode(.qr)
+        var received: [String] = []
+        service.onCode = { received.append($0) }
+
+        service.startDiscovery()
+
+        XCTAssertEqual(service.state, .connected(device))
+        XCTAssertEqual(service.connectedDevice, device)
+        XCTAssertEqual(service.devices, [device])
+        XCTAssertEqual(service.configurationState, .ready)
+        XCTAssertTrue(service.isReadyForScanning)
+        XCTAssertEqual(service.persistedSymbologyMode, .sessionCodes)
+        XCTAssertEqual(
+            defaults.string(forKey: BluetoothScannerService.preferredDeviceIDKey),
+            device.id
+        )
+        XCTAssertEqual(
+            service.diagnosticEvents.filter {
+                $0.message == "Discovery request ignored: a scanner link is held"
+            }.count,
+            1
+        )
+
+        service.simulateScan("READ-AFTER-DISCOVERY")
+        XCTAssertEqual(received, ["READ-AFTER-DISCOVERY"])
+    }
+
+    /// 検索を無視した後も、選び直しは通常の規則どおりに扱う。同じスキャナーは接続済み、
+    /// 別のスキャナーは先に切断、切断した後は検索も再接続もできる。
+    func testSelectionRulesStillApplyAfterDiscoveryWasIgnoredWhileConnected() {
+        let defaults = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let service = BluetoothScannerService(defaults: defaults)
+        service.startDiscovery()
+        let device = service.devices[0]
+        service.connectSelectedDevice(device)
+        service.startDiscovery()
+
+        service.connectSelectedDevice(device)
+        service.connectSelectedDevice(BluetoothScannerDevice(id: "OTHER", name: "HPRT-636E"))
+
+        XCTAssertEqual(service.connectedDevice, device)
+        XCTAssertTrue(
+            service.diagnosticEvents.contains { $0.message == "Selected scanner is already connected" }
+        )
+        XCTAssertTrue(
+            service.diagnosticEvents.contains {
+                $0.message.contains("disconnect the connected scanner first")
+            }
+        )
+
+        service.disconnect()
+        XCTAssertFalse(service.isConnected)
+        service.startDiscovery()
+        XCTAssertEqual(service.state, .idle)
+        XCTAssertEqual(service.devices, [device])
+        service.reconnectKnownDevice()
+        XCTAssertEqual(service.connectedDevice, device)
+        XCTAssertTrue(service.isReadyForScanning)
+    }
+
     func testGATTModeSuccessorIsTheScannerRenamedWithTheSameSuffix() {
         let origin = BluetoothScannerDevice(id: "2B94A2A1", name: "Hyper 160B-4F5F-UNI")
         let renamed = BluetoothScannerDevice(id: "4CD0F65B", name: "HPRT-4F5F")
