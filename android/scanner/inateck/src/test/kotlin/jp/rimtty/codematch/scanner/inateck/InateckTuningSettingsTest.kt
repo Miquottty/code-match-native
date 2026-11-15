@@ -71,27 +71,17 @@ class InateckTuningSettingsTest {
     }
 
     @Test fun bufferSettingsAreAlignedOnlyWhereTheScannerReportsThem() {
-        // BCST-36 as the official app shows it out of the box (#155): nothing
-        // erases the buffer, so reads made while disconnected pile up.
+        // BCST-36 as the official app shows it out of the box (#155): every
+        // buffer item already has the profile's value, so nothing is written.
+        // What piled up while disconnected is counted and erased on connect.
         val factory = listOf(
             item("inventory_mode", "0"),
             item("start_up_clean_cache", "0"),
             item("auto_upload_cache", "0"),
             item("d_click_upload_flag", "1"),
         )
-        val differences = InateckTuningSettings.differences(factory)
-        assertEquals(
-            listOf(
-                InateckTuningSettings.Item("start_up_clean_cache", 1),
-                InateckTuningSettings.Item("d_click_upload_flag", 0),
-            ),
-            differences,
-        )
-        val command = JsonParser.parseString(InateckTuningSettings.command(factory, differences)).asJsonArray
-        assertEquals(
-            listOf(item("start_up_clean_cache", "1"), item("d_click_upload_flag", "0")),
-            command.map { entry -> entry.asJsonObject.entrySet().associate { it.key to it.value.asString } },
-        )
+        assertTrue(InateckTuningSettings.differences(factory).isEmpty())
+        assertTrue(InateckTuningSettings.confirmed(factory))
 
         val inventoryModeLeftOn = listOf(item("inventory_mode", "1"), item("auto_upload_cache", "1"))
         assertEquals(
@@ -102,37 +92,32 @@ class InateckTuningSettingsTest {
             InateckTuningSettings.differences(inventoryModeLeftOn),
         )
 
-        // The BCST-36 (V2.6.16) spells the double-click item `dclick_upload_flag`.
-        val bcst36 = listOf(
-            item("inventory_mode", "1"),
+        // A BCST-36 (V2.6.16, spelling `dclick_upload_flag`) as the #156 build
+        // left it. With erase-at-power-on ON it stops scanning after a cold
+        // start on battery (#162), so that item goes back to OFF; double-click
+        // upload is left alone.
+        val writtenBy156 = listOf(
+            item("inventory_mode", "0"),
             item("start_up_clean_cache", "1"),
             item("auto_upload_cache", "0"),
-            item("dclick_upload_flag", "1"),
+            item("dclick_upload_flag", "0"),
         )
+        val differences = InateckTuningSettings.differences(writtenBy156)
+        assertEquals(listOf(InateckTuningSettings.Item("start_up_clean_cache", 0)), differences)
+        val command = JsonParser.parseString(InateckTuningSettings.command(writtenBy156, differences)).asJsonArray
         assertEquals(
-            listOf(
-                InateckTuningSettings.Item("inventory_mode", 0),
-                InateckTuningSettings.Item("dclick_upload_flag", 0),
-            ),
-            InateckTuningSettings.differences(bcst36),
+            listOf(item("start_up_clean_cache", "0")),
+            command.map { entry -> entry.asJsonObject.entrySet().associate { it.key to it.value.asString } },
         )
+        assertFalse(InateckTuningSettings.confirmed(writtenBy156))
         assertEquals(
-            "Scanner data modes: inventory=1 autoUpload=0 clearAtStartup=1 doubleClick=1",
-            InateckDataModes.from(bcst36).diagnosticLine(),
+            "Scanner data modes: inventory=0 autoUpload=0 clearAtStartup=1 doubleClick=0",
+            InateckDataModes.from(writtenBy156).diagnosticLine(),
         )
+        assertTrue(InateckTuningSettings.profile.none { it.name.contains("click_upload_flag") })
 
         // A model without cache management reports none of them: nothing is written.
         assertTrue(InateckTuningSettings.differences(inventory).none { it.name.contains("cache") })
-        assertTrue(
-            InateckTuningSettings.confirmed(
-                listOf(
-                    item("inventory_mode", "0"),
-                    item("start_up_clean_cache", "1"),
-                    item("auto_upload_cache", "0"),
-                    item("d_click_upload_flag", "0"),
-                ),
-            ),
-        )
     }
 
     @Test fun emptyOrPartialInventoryIsIncompleteRatherThanUnsupported() {

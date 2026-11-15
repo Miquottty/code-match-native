@@ -133,7 +133,7 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 4. 接続前のscanner報告を全symbology保存し、QR+Code 128固定mode後、終了・背景・切断・再接続で完全復元する。
 5. timeout後にGATT commandが重ならず、安全にカメラへfallbackすることを確認する。
 6. BLE→camera→BLEで工程と読み取り済みQRを維持し、scan payloadが診断やlogcatへ出ないことを確認する。
-7. 内蔵バッファーの消去（#155）: アプリを終了して接続を切り、任意のコードを3回読む。アプリを起動して接続し、診断ログに`Scanner cache: 3 stored, cleared, 0 remain`と`Scanner data modes: …`が出ることを確認する。Inateck公式アプリの「キャッシュ管理」で、合計が0、「起動時にキャッシュクリア」がON、「棚卸モード」がOFFであることを確認する。行の読み方は[`../ios/IMPLEMENTATION_GUIDE.md`](../ios/IMPLEMENTATION_GUIDE.md)の「内蔵バッファーの消去」。
+7. 内蔵バッファーの消去（#155）: アプリを終了して接続を切り、任意のコードを3回読む。アプリを起動して接続し、診断ログに`Scanner cache: 3 stored, cleared, 0 remain`と`Scanner data modes: …`が出ることを確認する。Inateck公式アプリの「キャッシュ管理」で、合計が0、「起動時にキャッシュクリア」がOFF、「棚卸モード」がOFFであることを確認する。続けて、スキャナをUSBにつながずに電源を入れ直し、再接続してQR→Code 128を読み取れること、診断ログが`clearAtStartup=0`であることを確認する（#162。ONのまま電池で起動し直すと読み取れなくなる）。行の読み方は[`../ios/IMPLEMENTATION_GUIDE.md`](../ios/IMPLEMENTATION_GUIDE.md)の「内蔵バッファーの消去」。
 
 2026-09-05に`release` APK（#56）でBCST-36と接続し、QR→Code 128の照合完了をユーザーが確認しました。残る不一致・重複・連続箱、予期しない切断、scanner再起動、timeout/fallback、Code 128待機/結果表示中のforce-stopは対象外（打ち切り）です。
 
