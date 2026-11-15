@@ -22,10 +22,37 @@ final class BluetoothScannerServiceTests: XCTestCase {
         super.tearDown()
     }
 
-    func testInitialGATTSetupCodesUseTheVerifiedInateckSequence() {
+    /// 初回接続ガイドの順序はスキャナ側の設定手順そのもの（BCST-36 実機で 2026-11-15 に確認）。
+    /// 工場出荷時設定に戻した直後に BLE_GATT を読んでも切り替わらないため、いったん保存して
+    /// 設定モードへ入り直す。ステップ id は Android と共通。
+    func testInitialGATTSetupStepsUseTheVerifiedInateckSequence() {
+        XCTAssertEqual(
+            BluetoothScannerSetupStep.allCases.map(\.rawValue),
+            ["enterSetup", "factoryReset", "saveFactoryReset", "enterSetupAgain", "gattMode", "saveAndExit"]
+        )
+        XCTAssertEqual(
+            BluetoothScannerSetupStep.allCases.map(\.accessibilityID),
+            BluetoothScannerSetupStep.allCases.map(\.rawValue)
+        )
+        XCTAssertEqual(
+            BluetoothScannerSetupStep.allCases.map(\.code.rawValue),
+            ["/*EnterSet*/", "/*SetFun00*/", "/*ExitSave*/", "/*EnterSet*/", "/*BLE_GATT*/", "/*ExitSave*/"]
+        )
         XCTAssertEqual(
             BluetoothScannerSetupCode.allCases.map(\.rawValue),
-            ["/*EnterSet*/", "/*BLE_GATT*/", "/*ExitSave*/"]
+            ["/*EnterSet*/", "/*SetFun00*/", "/*BLE_GATT*/", "/*ExitSave*/"]
+        )
+    }
+
+    /// setUp で日本語に固定済み。英語ロケールのホスト（CI）で ja カタログの欠落を検出する。
+    func testSetupStepCopyResolvesInJapaneseAndFactoryResetHasNoScannerDisplayHint() {
+        XCTAssertEqual(
+            BluetoothScannerSetupStep.allCases.map(\.scannerDisplayText),
+            ["Enter Setup", nil, "Exit / Save", "Enter Setup", "BLE_GATT", "Exit / Save"]
+        )
+        XCTAssertEqual(
+            BluetoothScannerSetupStep.allCases.map(\.title),
+            ["設定を開始", "工場出荷時の設定に戻す", "初期化を保存して終了", "もう一度、設定を開始", "GATTモードへ切り替え", "設定を保存して終了"]
         )
     }
 

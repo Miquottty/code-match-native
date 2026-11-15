@@ -312,12 +312,18 @@ final class CodeMatchUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["scannerSetupFullscreenBarcode_enterSetup"].waitForExistence(timeout: 3))
         app.buttons["scannerSetupFullscreenCloseButton"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["scannerSetupBarcode_enterSetup"].waitForExistence(timeout: 3))
+        // 工場出荷時設定に戻す → 保存 → 設定モードへ入り直す → GATT → 保存、の6画面を順に進む。
+        for stepID in ["factoryReset", "saveFactoryReset", "enterSetupAgain", "gattMode", "saveAndExit"] {
+            app.buttons["scannerSetupNextButton"].tap()
+            XCTAssertTrue(
+                app.descendants(matching: .any)["scannerSetupBarcode_\(stepID)"].waitForExistence(timeout: 3),
+                "setup guide page \(stepID)"
+            )
+        }
         app.buttons["scannerSetupNextButton"].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["scannerSetupBarcode_gattMode"].waitForExistence(timeout: 3))
-        app.buttons["scannerSetupNextButton"].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["scannerSetupBarcode_saveAndExit"].waitForExistence(timeout: 3))
-        app.buttons["scannerSetupNextButton"].tap()
-        app.buttons["scannerSetupSearchButton"].tap()
+        let searchButton = app.buttons["scannerSetupSearchButton"]
+        XCTAssertTrue(searchButton.waitForExistence(timeout: 3))
+        searchButton.tap()
 
         let device = app.buttons["bluetoothScannerDevice_SIMULATOR-BCST-47"]
         XCTAssertTrue(device.waitForExistence(timeout: 3))
