@@ -55,4 +55,28 @@ class DiagnosticLogFormatterTest {
         val name = DiagnosticLogFormatter.fileName(Instant.ofEpochMilli(1_757_000_000_000L), zone)
         assertEquals("codematch-ble-diagnostics-20250905-003320.txt", name)
     }
+
+    @Test
+    fun recentRowsAreNewestFirstWithLocalTimeAndStatusText() {
+        val events = listOf(
+            DiagnosticEvent(DiagnosticCategory.CONFIGURATION, "symbology-ready", 1_757_000_001_500L, 2),
+            DiagnosticEvent(DiagnosticCategory.CONNECTION, "connected", 1_757_000_000_000L, 1),
+            DiagnosticEvent(DiagnosticCategory.ERROR, "timeout", 1_757_000_002_000L, 3),
+        )
+
+        assertEquals(
+            listOf(
+                DiagnosticLogFormatter.Row("00:33:22", "timeout", isError = true),
+                DiagnosticLogFormatter.Row("00:33:21", "symbology-ready", isError = false),
+                DiagnosticLogFormatter.Row("00:33:20", "connected", isError = false),
+            ),
+            DiagnosticLogFormatter.recentRows(events, limit = 20, zoneId = zone),
+        )
+        // Only the newest `limit` events are listed.
+        assertEquals(
+            listOf("timeout", "symbology-ready"),
+            DiagnosticLogFormatter.recentRows(events, limit = 2, zoneId = zone).map { it.message },
+        )
+        assertEquals(emptyList<DiagnosticLogFormatter.Row>(), DiagnosticLogFormatter.recentRows(emptyList(), 20, zone))
+    }
 }

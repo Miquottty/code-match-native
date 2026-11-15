@@ -30,6 +30,37 @@ object DiagnosticLogFormatter {
         DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSXXX")
     private val fileNameFormatter: DateTimeFormatter =
         DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
+    private val rowTimeFormatter: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("HH:mm:ss")
+    private val chronological =
+        compareBy<DiagnosticEvent> { it.timestampMillis }.thenBy { it.sequence }
+
+    /** One line of the on-screen list: local time and the event's status text. */
+    data class Row(
+        val time: String,
+        val message: String,
+        val isError: Boolean,
+    )
+
+    /**
+     * The newest [limit] events for the settings screen, newest first, like
+     * the iOS list. It shows the same sanitized status text as the export.
+     */
+    fun recentRows(
+        events: List<DiagnosticEvent>,
+        limit: Int,
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): List<Row> = events
+        .sortedWith(chronological)
+        .takeLast(limit)
+        .asReversed()
+        .map { event ->
+            Row(
+                time = rowTimeFormatter.format(Instant.ofEpochMilli(event.timestampMillis).atZone(zoneId)),
+                message = event.message,
+                isError = event.category == DiagnosticCategory.ERROR,
+            )
+        }
 
     fun format(
         events: List<DiagnosticEvent>,
@@ -47,7 +78,7 @@ object DiagnosticLogFormatter {
         appendLine("events: ${events.size}")
         appendLine()
         events
-            .sortedWith(compareBy<DiagnosticEvent> { it.timestampMillis }.thenBy { it.sequence })
+            .sortedWith(chronological)
             .forEach { event ->
                 val timestamp = timestampFormatter.format(
                     Instant.ofEpochMilli(event.timestampMillis).atZone(zoneId),
