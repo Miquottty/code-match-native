@@ -17,6 +17,7 @@ import jp.rimtty.codematch.core.model.AppLanguage
 import jp.rimtty.codematch.core.model.MatchSession
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -273,7 +274,9 @@ class HistoryPdfBridgeTest {
         val intent = HistoryPdfBridge.createMailIntent(uri, mail)
 
         assertEquals(Intent.ACTION_SEND, intent.action)
-        assertEquals(HistoryPdfBridge.PDF_MIME_TYPE, intent.type)
+        // No MIME type: a typed intent with a mailto selector resolves to no
+        // mail app on a device, which sent every hand-off to the share chooser.
+        assertNull(intent.type)
         assertEquals(listOf(ReportMailContent.RECIPIENT), intent.getStringArrayExtra(Intent.EXTRA_EMAIL)?.toList())
         assertEquals(mail.subject, intent.getStringExtra(Intent.EXTRA_SUBJECT))
         assertEquals(mail.body, intent.getStringExtra(Intent.EXTRA_TEXT))
