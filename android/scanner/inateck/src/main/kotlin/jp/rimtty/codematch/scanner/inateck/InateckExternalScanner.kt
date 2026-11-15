@@ -220,12 +220,27 @@ class InateckExternalScanner private constructor(
         publishTuning(TuningState.APPLYING)
         val accepted = gateway.applyTuning(deviceId) { outcome ->
             if (!closed && generation == tuningGeneration && connectedDevice?.id == deviceId) {
+                if (outcome == InateckTuningOutcome.INCOMPLETE) {
+                    // An empty or partial inventory says nothing about the
+                    // model. Ask again a bounded number of times instead of
+                    // reporting "unsupported", then give up as a failure.
+                    tuningAttempts++
+                    tuningRetryAt = nowMillis() + TUNING_RETRY_DELAY_MILLIS
+                    connection.recordDiagnostic("Scanner tuning inventory incomplete", error = true)
+                    publishTuning(
+                        if (tuningAttempts >= TUNING_ATTEMPT_LIMIT) TuningState.FAILED else TuningState.UNKNOWN,
+                    )
+                    drainDeferredSettings()
+                    return@applyTuning
+                }
                 publishTuning(
                     when (outcome) {
                         InateckTuningOutcome.UNSUPPORTED -> TuningState.UNSUPPORTED
                         InateckTuningOutcome.MATCHED -> TuningState.MATCHED
                         InateckTuningOutcome.APPLIED -> TuningState.APPLIED
-                        InateckTuningOutcome.FAILED -> TuningState.FAILED
+                        InateckTuningOutcome.FAILED,
+                        InateckTuningOutcome.INCOMPLETE,
+                        -> TuningState.FAILED
                     },
                 )
                 // What the scanner reported before this tuning wrote anything,

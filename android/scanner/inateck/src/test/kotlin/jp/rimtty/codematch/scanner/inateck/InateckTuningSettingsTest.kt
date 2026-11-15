@@ -135,6 +135,21 @@ class InateckTuningSettingsTest {
         )
     }
 
+    @Test fun emptyOrPartialInventoryIsIncompleteRatherThanUnsupported() {
+        // Device log, 2026-11-15: a disturbed command channel answered the
+        // settings read with zero items.
+        assertFalse(InateckTuningSettings.isCompleteInventory(emptyList()))
+        assertFalse(InateckTuningSettings.isCompleteInventory(listOf(item("code128_on", "1"))))
+        assertTrue(
+            InateckTuningSettings.isCompleteInventory(
+                listOf(item("code128_on", "1"), item("qrcode_on", "1")),
+            ),
+        )
+        // The empty answer has no tuning item either, which is why it used to
+        // be reported as an unsupported model.
+        assertTrue(InateckTuningSettings.present(emptyList()).isEmpty())
+    }
+
     @Test fun ambiguousOrInvalidEntriesAreIgnored() {
         val duplicated = inventory + item("auto_close_mode", "10", area = "other")
         assertTrue(InateckTuningSettings.present(duplicated).none { it.name == "auto_close_mode" })

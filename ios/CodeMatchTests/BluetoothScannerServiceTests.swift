@@ -908,6 +908,37 @@ final class BluetoothScannerServiceTests: XCTestCase {
         )
     }
 
+    func testEmptyInventoryIsNotTakenForAScannerWithoutIllumination() {
+        // 実機ログ（2026-11-15）: 応答が乱れたとき、getSettingInfoは22文字・0件を返した。
+        let empty = #"{"status":0,"data":[]}"#
+        XCTAssertEqual(BluetoothScannerService.illuminationAvailability(in: empty), .incomplete)
+        XCTAssertEqual(BluetoothScannerService.illuminationAvailability(in: "not json"), .incomplete)
+
+        let withIllumination = """
+        {"status":0,"data":[
+          {"area":"7","name":"code128_on","value":"1"},
+          {"area":"21","name":"qrcode_on","value":"1"},
+          {"area":"33","name":"lighting_lamp_control","value":"2"}
+        ]}
+        """
+        XCTAssertEqual(
+            BluetoothScannerService.illuminationAvailability(in: withIllumination),
+            .available
+        )
+
+        // inventoryが揃っていて照明の項目だけがない場合に限り、未対応とする。
+        let withoutIllumination = """
+        {"status":0,"data":[
+          {"area":"7","name":"code128_on","value":"1"},
+          {"area":"21","name":"qrcode_on","value":"1"}
+        ]}
+        """
+        XCTAssertEqual(
+            BluetoothScannerService.illuminationAvailability(in: withoutIllumination),
+            .unsupported
+        )
+    }
+
     func testScannerCacheSummaryReportsCountsOnly() {
         XCTAssertEqual(
             BluetoothScannerService.scannerCacheSummary(stored: nil),
