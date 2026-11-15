@@ -272,15 +272,17 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         TuningItem(name: "pdf417_read_phase", value: 0),
         TuningItem(name: "auto_close_mode", value: 20),
         // 内蔵バッファーを満杯にしないための設定（#155）。スキャナーは未接続中の読み取りを
-        // 本体にため、満杯になるとすべての読み取りを拒否する。棚卸モードは使わず、電源を
-        // 入れるたびに消し、たまった読み取りをアプリへ流し込ませない。
+        // 本体にため、満杯になるとすべての読み取りを拒否する。棚卸モードは使わず、たまった
+        // 読み取りをアプリへ流し込ませない。たまった分は接続のたびに件数を読んで消す
+        // （`clearScannerCacheIfNeeded`）。
         TuningItem(name: "inventory_mode", value: 0),
-        TuningItem(name: "start_up_clean_cache", value: 1),
         TuningItem(name: "auto_upload_cache", value: 0),
-        // ダブルクリックでのアップロードは機種でnameの綴りが違う（BCST-36は`dclick_upload_flag`）。
-        // 報告された方だけが対象になる。
-        TuningItem(name: "d_click_upload_flag", value: 0),
-        TuningItem(name: "dclick_upload_flag", value: 0)
+        // 電源ON時のバッファー消去は必ずOFF（工場出荷値）にそろえる（#162）。ONにしたBCST-36
+        // （V2.6.16）は、電池で起動し直した後トリガーが効かなくなり、設定の読み出しに空の応答を
+        // 返した（2026-11-15実機、USB給電で起動した間だけ正常）。#156でONを書いた個体や、
+        // 公式アプリでONにされた個体は、次の接続でOFFに戻る。ダブルクリックでのアップロード
+        // （`d_click_upload_flag` / `dclick_upload_flag`）は必要がないので書かない。
+        TuningItem(name: "start_up_clean_cache", value: 0)
     ]
 
     @Published private(set) var devices: [BluetoothScannerDevice] = []
