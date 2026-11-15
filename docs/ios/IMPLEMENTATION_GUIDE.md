@@ -152,6 +152,34 @@ HPRT-4F5F（2026-09-05）で確定したinventory nameと汎用flagの対応:
 
 `time_auto_off`を試行で20にした個体は、現行プロファイル適用前に10へ戻してあります。
 
+### 内蔵バッファーの消去（#155）
+
+スキャナは未接続中の読み取りを本体にため、満杯になるとすべての読み取りを拒否します。BCST-36を1〜2か月運用して読めなくなった報告を受け、次の2つを入れています。
+
+- 読取チューニングのプロファイルに、バッファー関連の4項目を追加しました。方式はほかの項目と同じです（inventoryにある項目だけ、差分だけ、再取得で確認）。
+
+| 目的 | inventory name | 汎用flag | 値 |
+|---|---|---|---|
+| 棚卸モード | `inventory_mode` | 1013 | 0（OFF） |
+| 電源ON時のバッファー消去 | `start_up_clean_cache` | 1015 | 1（ON） |
+| 接続時の自動アップロード | `auto_upload_cache` | 1016 | 0（OFF） |
+| ダブルクリックでアップロード | `d_click_upload_flag` | 1014 | 0（OFF） |
+
+- 版・電池の読み出しの後、接続ごとに1回`clearScannerCacheIfNeeded`を実行します。`getInventoryNum`で件数を読み、1件以上なら`inventoryClearCache`で消去し、もう一度件数を読みます。設定コマンドのゲートを通し、6秒応答がなければ接続は閉じずに打ち切ります。
+
+診断ログの読み方（Androidも同じ文言）:
+
+| 行 | 意味 |
+|---|---|
+| `Scanner cache: 0 stored` | たまっていなかった |
+| `Scanner cache: N stored, cleared, 0 remain` | N件を消去できた |
+| `Scanner cache: N stored, clear failed` / `…, M remain` | 件数は読めるが消去できない。要調査 |
+| `Scanner cache: unavailable` | 件数を読めない（未対応か応答なし） |
+| `Scanner cache check timed out` | 6秒以内に終わらなかった |
+| `Scanner data modes: inventory=… autoUpload=… clearAtStartup=… doubleClick=…` | 書き込み前にスキャナが報告した値。`unknown`はその機種が項目を持たない |
+
+SDKのドキュメントは棚卸のAPIを「USB接続が前提」と書いていますが、iOS・AndroidのSDKはどちらもBluetooth接続用のクラスにこのAPIを持っています。実機で確認できているのはBCST-36だけで、ほかの機種は利用者の診断ログで確認します。
+
 ## 6. 次の拡張候補
 
 必要になった時だけ、設定画面でGS1-128やEANを選べる機能、懐中電灯、履歴の検索、CSVエクスポートを追加します。現時点ではシンプルさと誤操作防止を優先し、実装していません（履歴の削除とPDF出力・共有は実装済みです）。
