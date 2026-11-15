@@ -277,7 +277,10 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         TuningItem(name: "inventory_mode", value: 0),
         TuningItem(name: "start_up_clean_cache", value: 1),
         TuningItem(name: "auto_upload_cache", value: 0),
-        TuningItem(name: "d_click_upload_flag", value: 0)
+        // ダブルクリックでのアップロードは機種でnameの綴りが違う（BCST-36は`dclick_upload_flag`）。
+        // 報告された方だけが対象になる。
+        TuningItem(name: "d_click_upload_flag", value: 0),
+        TuningItem(name: "dclick_upload_flag", value: 0)
     ]
 
     @Published private(set) var devices: [BluetoothScannerDevice] = []
@@ -1088,7 +1091,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         return "Scanner data modes: inventory=\(text("inventory_mode")) "
             + "autoUpload=\(text("auto_upload_cache")) "
             + "clearAtStartup=\(text("start_up_clean_cache")) "
-            + "doubleClick=\(text("d_click_upload_flag"))"
+            + "doubleClick=\(current["d_click_upload_flag"] != nil ? text("d_click_upload_flag") : text("dclick_upload_flag"))"
     }
 
     private func lastBatteryNote() -> String {
@@ -2836,7 +2839,7 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         "scan_mode", "auto_close_mode", "time_auto_off", "time_continuous_mode", "auto_off",
         "auto_sense_distan", "security_level", "repeat_data_check_on", "ignore_short_bar",
         "data_transmission_speed", "inventory_mode", "auto_upload_cache", "start_up_clean_cache",
-        "d_click_upload_flag"
+        "d_click_upload_flag", "dclick_upload_flag"
     ]
 
     private static let legacySymbologySettingNames: Set<String> = [

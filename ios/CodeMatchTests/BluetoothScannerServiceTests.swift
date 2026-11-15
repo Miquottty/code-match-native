@@ -846,6 +846,27 @@ final class BluetoothScannerServiceTests: XCTestCase {
             ]
         )
 
+        // BCST-36（V2.6.16）は綴りが`dclick_upload_flag`。どちらの綴りでも同じ扱いにする。
+        let bcst36 = """
+        {"status":0,"data":[
+          {"area":"50","name":"inventory_mode","value":"1"},
+          {"area":"51","name":"start_up_clean_cache","value":"1"},
+          {"area":"52","name":"auto_upload_cache","value":"0"},
+          {"area":"54","name":"dclick_upload_flag","value":"1"}
+        ]}
+        """
+        XCTAssertEqual(
+            BluetoothScannerService.tuningDifferences(settings: bcst36),
+            [
+                BluetoothScannerService.TuningItem(name: "inventory_mode", value: 0),
+                BluetoothScannerService.TuningItem(name: "dclick_upload_flag", value: 0)
+            ]
+        )
+        XCTAssertEqual(
+            BluetoothScannerService.scannerDataModesSummary(settings: bcst36),
+            "Scanner data modes: inventory=1 autoUpload=0 clearAtStartup=1 doubleClick=1"
+        )
+
         // キャッシュ管理を持たない機種はどの項目も報告しない。何も書かない。
         let withoutCacheManagement = """
         {"status":0,"data":[{"area":"7","name":"code128_on","value":"1"}]}

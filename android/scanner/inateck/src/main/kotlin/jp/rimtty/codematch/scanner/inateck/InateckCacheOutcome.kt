@@ -51,7 +51,7 @@ internal data class InateckDataModes(
                 inventory = value("inventory_mode"),
                 autoUpload = value("auto_upload_cache"),
                 clearAtStartup = value("start_up_clean_cache"),
-                doubleClick = value("d_click_upload_flag"),
+                doubleClick = value("d_click_upload_flag") ?: value("dclick_upload_flag"),
             )
         }
     }

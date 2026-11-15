@@ -37,7 +37,10 @@ internal object InateckTuningSettings {
         Item("inventory_mode", 0),
         Item("start_up_clean_cache", 1),
         Item("auto_upload_cache", 0),
+        // The double-click upload item is spelled differently across models
+        // (the BCST-36 reports `dclick_upload_flag`); only the reported one applies.
         Item("d_click_upload_flag", 0),
+        Item("dclick_upload_flag", 0),
     )
 
     private data class Reported(val area: String, val value: Int)

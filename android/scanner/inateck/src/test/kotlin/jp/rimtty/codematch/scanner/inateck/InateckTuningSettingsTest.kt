@@ -102,6 +102,25 @@ class InateckTuningSettingsTest {
             InateckTuningSettings.differences(inventoryModeLeftOn),
         )
 
+        // The BCST-36 (V2.6.16) spells the double-click item `dclick_upload_flag`.
+        val bcst36 = listOf(
+            item("inventory_mode", "1"),
+            item("start_up_clean_cache", "1"),
+            item("auto_upload_cache", "0"),
+            item("dclick_upload_flag", "1"),
+        )
+        assertEquals(
+            listOf(
+                InateckTuningSettings.Item("inventory_mode", 0),
+                InateckTuningSettings.Item("dclick_upload_flag", 0),
+            ),
+            InateckTuningSettings.differences(bcst36),
+        )
+        assertEquals(
+            "Scanner data modes: inventory=1 autoUpload=0 clearAtStartup=1 doubleClick=1",
+            InateckDataModes.from(bcst36).diagnosticLine(),
+        )
+
         // A model without cache management reports none of them: nothing is written.
         assertTrue(InateckTuningSettings.differences(inventory).none { it.name.contains("cache") })
         assertTrue(
