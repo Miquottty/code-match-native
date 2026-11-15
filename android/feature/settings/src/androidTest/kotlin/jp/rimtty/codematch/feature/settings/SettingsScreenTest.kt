@@ -93,7 +93,7 @@ class SettingsScreenTest {
     }
 
     @Test
-    fun explicitlyOpenedGuideShowsThreeStepsAndAllPreferenceGroups() {
+    fun explicitlyOpenedGuideShowsTheFirstStepAndAllPreferenceGroups() {
         composeRule.setContent {
             MaterialTheme {
                 SettingsScreen(SettingsUiState(setupGuideVisible = true), onAction = {})
@@ -101,13 +101,21 @@ class SettingsScreenTest {
         }
 
         composeRule.onNodeWithTag(SettingsTestTags.SETUP_GUIDE).assertIsDisplayed()
-        composeRule.onNodeWithTag(SettingsTestTags.SETUP_GUIDE_STEP_1).assertIsDisplayed()
+        composeRule.onNodeWithTag(
+            SettingsTestTags.setupGuideStep(BluetoothScannerSetupStep.ENTER_SETUP),
+        ).assertIsDisplayed()
+        composeRule.onAllNodesWithTag(SettingsTestTags.SETUP_RESET_CAUTION).assertCountEquals(1)
         composeRule.onAllNodesWithTag(SettingsTestTags.SETUP_BARCODE).assertCountEquals(1)
         composeRule.onAllNodesWithTag(
-            SettingsTestTags.setupBarcode(BluetoothScannerSetupCode.ENTER_SETUP),
+            SettingsTestTags.setupBarcode(BluetoothScannerSetupStep.ENTER_SETUP),
         ).assertCountEquals(1)
-        composeRule.onAllNodesWithTag(SettingsTestTags.SETUP_GUIDE_STEP_2).assertCountEquals(0)
-        composeRule.onAllNodesWithTag(SettingsTestTags.SETUP_GUIDE_STEP_3).assertCountEquals(0)
+        BluetoothScannerSetupStep.entries
+            .filterNot { it == BluetoothScannerSetupStep.ENTER_SETUP }
+            .forEach { laterStep ->
+                composeRule.onAllNodesWithTag(
+                    SettingsTestTags.setupGuideStep(laterStep),
+                ).assertCountEquals(0)
+            }
         composeRule.onAllNodesWithTag(SettingsTestTags.AUTO_ADVANCE).assertCountEquals(1)
         composeRule.onAllNodesWithTag(SettingsTestTags.VOLUME).assertCountEquals(1)
         composeRule.onAllNodesWithTag(SettingsTestTags.SUCCESS_SOUNDS).assertCountEquals(1)
@@ -219,22 +227,43 @@ class SettingsScreenTest {
             }
         }
 
-        BluetoothScannerSetupCode.entries.forEachIndexed { index, code ->
+        val steps = BluetoothScannerSetupStep.entries
+        assertEquals(6, steps.size)
+        steps.forEachIndexed { index, step ->
+            composeRule.onAllNodesWithTag(
+                SettingsTestTags.setupGuideStep(step),
+            ).assertCountEquals(1)
             composeRule.onAllNodesWithTag(SettingsTestTags.SETUP_BARCODE).assertCountEquals(1)
             composeRule.onAllNodesWithTag(
-                SettingsTestTags.setupBarcode(code),
+                SettingsTestTags.setupBarcode(step),
             ).assertCountEquals(1)
-            BluetoothScannerSetupCode.entries
-                .filterNot { it == code }
-                .forEach { otherCode ->
-                    composeRule.onAllNodesWithTag(
-                        SettingsTestTags.setupBarcode(otherCode),
-                    ).assertCountEquals(0)
-                }
-            if (index > 0) {
-                composeRule.onNodeWithTag(SettingsTestTags.SETUP_PREVIOUS).assertIsDisplayed()
+            composeRule.onAllNodesWithTag(
+                SettingsTestTags.setupEnlarge(step),
+            ).assertCountEquals(1)
+            // The two EnterSet pages and the two ExitSave pages show the same
+            // code, so the other pages are told apart by step, not by code.
+            steps.filterNot { it == step }.forEach { otherStep ->
+                composeRule.onAllNodesWithTag(
+                    SettingsTestTags.setupGuideStep(otherStep),
+                ).assertCountEquals(0)
+                composeRule.onAllNodesWithTag(
+                    SettingsTestTags.setupBarcode(otherStep),
+                ).assertCountEquals(0)
             }
-            if (index < BluetoothScannerSetupCode.entries.lastIndex) {
+            // The factory-reset caution is shown once, above the first step.
+            composeRule.onAllNodesWithTag(SettingsTestTags.SETUP_RESET_CAUTION)
+                .assertCountEquals(if (index == 0) 1 else 0)
+            // No display text is confirmed for the factory reset: no hint.
+            composeRule.onAllNodesWithTag(SettingsTestTags.SETUP_SCANNER_DISPLAY)
+                .assertCountEquals(if (step.code.scannerDisplayText.isEmpty()) 0 else 1)
+            if (index > 0) {
+                composeRule.onNodeWithTag(SettingsTestTags.SETUP_PREVIOUS)
+                    .performScrollTo()
+                    .assertIsDisplayed()
+            } else {
+                composeRule.onAllNodesWithTag(SettingsTestTags.SETUP_PREVIOUS).assertCountEquals(0)
+            }
+            if (index < steps.lastIndex) {
                 composeRule.onNodeWithTag(SettingsTestTags.SETUP_NEXT)
                     .performScrollTo()
                     .performClick()
@@ -245,8 +274,36 @@ class SettingsScreenTest {
             .performScrollTo()
             .performClick()
         composeRule.onAllNodesWithTag(
-            SettingsTestTags.setupBarcode(BluetoothScannerSetupCode.GATT_MODE),
+            SettingsTestTags.setupBarcode(BluetoothScannerSetupStep.GATT_MODE),
         ).assertCountEquals(1)
+    }
+
+    @Test
+    fun factoryResetStepHidesTheScannerDisplayHint() {
+        composeRule.setContent {
+            MaterialTheme {
+                SettingsScreen(SettingsUiState(setupGuideVisible = true), onAction = {})
+            }
+        }
+
+        composeRule.onAllNodesWithTag(SettingsTestTags.SETUP_SCANNER_DISPLAY).assertCountEquals(1)
+        composeRule.onAllNodesWithText("Enter Setup").assertCountEquals(1)
+
+        composeRule.onNodeWithTag(SettingsTestTags.SETUP_NEXT)
+            .performScrollTo()
+            .performClick()
+
+        composeRule.onAllNodesWithTag(
+            SettingsTestTags.setupGuideStep(BluetoothScannerSetupStep.FACTORY_RESET),
+        ).assertCountEquals(1)
+        composeRule.onAllNodesWithTag(SettingsTestTags.SETUP_SCANNER_DISPLAY).assertCountEquals(0)
+
+        composeRule.onNodeWithTag(SettingsTestTags.SETUP_NEXT)
+            .performScrollTo()
+            .performClick()
+
+        composeRule.onAllNodesWithTag(SettingsTestTags.SETUP_SCANNER_DISPLAY).assertCountEquals(1)
+        composeRule.onAllNodesWithText("Exit / Save").assertCountEquals(1)
     }
 
     @Test
@@ -258,19 +315,53 @@ class SettingsScreenTest {
         }
 
         composeRule.onNodeWithTag(
-            SettingsTestTags.setupEnlarge(BluetoothScannerSetupCode.ENTER_SETUP),
+            SettingsTestTags.setupEnlarge(BluetoothScannerSetupStep.ENTER_SETUP),
         ).performScrollTo().performClick()
         composeRule.onNodeWithTag(
-            SettingsTestTags.setupFullscreenBarcode(BluetoothScannerSetupCode.ENTER_SETUP),
+            SettingsTestTags.setupFullscreenBarcode(BluetoothScannerSetupStep.ENTER_SETUP),
         ).assertIsDisplayed()
         composeRule.onNodeWithTag(SettingsTestTags.SETUP_FULLSCREEN_CLOSE).performClick()
         composeRule.onAllNodesWithTag(
-            SettingsTestTags.setupBarcode(BluetoothScannerSetupCode.ENTER_SETUP),
+            SettingsTestTags.setupBarcode(BluetoothScannerSetupStep.ENTER_SETUP),
+        ).assertCountEquals(1)
+    }
+
+    /**
+     * The second EnterSet page shows the same code as the first, so the
+     * enlarged view must belong to the page that opened it.
+     */
+    @Test
+    fun enlargedBarcodeBelongsToTheStepThatOpenedIt() {
+        composeRule.setContent {
+            MaterialTheme {
+                SettingsScreen(SettingsUiState(setupGuideVisible = true), onAction = {})
+            }
+        }
+
+        repeat(BluetoothScannerSetupStep.ENTER_SETUP_AGAIN.ordinal) {
+            composeRule.onNodeWithTag(SettingsTestTags.SETUP_NEXT)
+                .performScrollTo()
+                .performClick()
+        }
+        composeRule.onNodeWithTag(
+            SettingsTestTags.setupEnlarge(BluetoothScannerSetupStep.ENTER_SETUP_AGAIN),
+        ).performScrollTo().performClick()
+
+        composeRule.onNodeWithTag(
+            SettingsTestTags.setupFullscreenBarcode(BluetoothScannerSetupStep.ENTER_SETUP_AGAIN),
+        ).assertIsDisplayed()
+        composeRule.onAllNodesWithTag(
+            SettingsTestTags.setupFullscreenBarcode(BluetoothScannerSetupStep.ENTER_SETUP),
+        ).assertCountEquals(0)
+
+        composeRule.onNodeWithTag(SettingsTestTags.SETUP_FULLSCREEN_CLOSE).performClick()
+        composeRule.onAllNodesWithTag(
+            SettingsTestTags.setupGuideStep(BluetoothScannerSetupStep.ENTER_SETUP_AGAIN),
         ).assertCountEquals(1)
     }
 
     @Test
-    fun completingTheThirdSetupCodeEmitsCloseAction() {
+    fun completingTheLastSetupCodeEmitsCloseAction() {
         val actions = mutableListOf<SettingsUiAction>()
         composeRule.setContent {
             MaterialTheme {
@@ -278,11 +369,23 @@ class SettingsScreenTest {
             }
         }
 
-        repeat(3) {
+        val steps = BluetoothScannerSetupStep.entries
+        repeat(steps.size - 1) {
             composeRule.onNodeWithTag(SettingsTestTags.SETUP_NEXT)
                 .performScrollTo()
                 .performClick()
         }
+        // Reaching the last page must not close the guide by itself.
+        composeRule.runOnIdle {
+            assertTrue(!actions.contains(SettingsUiAction.CloseSetupGuide))
+        }
+        composeRule.onAllNodesWithTag(
+            SettingsTestTags.setupGuideStep(BluetoothScannerSetupStep.SAVE_AND_EXIT),
+        ).assertCountEquals(1)
+
+        composeRule.onNodeWithTag(SettingsTestTags.SETUP_NEXT)
+            .performScrollTo()
+            .performClick()
 
         assertTrue(actions.contains(SettingsUiAction.CloseSetupGuide))
     }

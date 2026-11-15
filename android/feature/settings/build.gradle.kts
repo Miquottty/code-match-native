@@ -40,7 +40,7 @@ dependencies {
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.espresso.core)
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-    // Test-only decoder proof for the three generated BCST-47 setup codes.
+    // Test-only decoder proof for the generated scanner setup codes.
     // Production settings UI remains independent of the camera/ML Kit module.
     androidTestImplementation(libs.mlkit.barcode.scanning)
 }

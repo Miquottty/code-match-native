@@ -37,9 +37,8 @@ object SettingsTestTags {
     const val DIAGNOSTICS_SHARE = "settings_diagnostics_share"
     const val DIAGNOSTICS_SAVE = "settings_diagnostics_save"
     const val SETUP_GUIDE = "settings_scanner_setup_guide"
-    const val SETUP_GUIDE_STEP_1 = "settings_setup_step_1"
-    const val SETUP_GUIDE_STEP_2 = "settings_setup_step_2"
-    const val SETUP_GUIDE_STEP_3 = "settings_setup_step_3"
+    const val SETUP_RESET_CAUTION = "settings_setup_reset_caution"
+    const val SETUP_SCANNER_DISPLAY = "settings_setup_scanner_display"
     const val SETUP_GUIDE_CLOSE = "settings_setup_guide_close"
     const val SETUP_GUIDE_OPEN = "settings_setup_guide_open"
     const val SETUP_BARCODE = "settings_setup_barcode"
@@ -86,14 +85,21 @@ object SettingsTestTags {
     const val SCAN_LOG_CLEAR = "settings_scan_log_clear"
     const val SCAN_LOG_CLEAR_CONFIRM = "settings_scan_log_clear_confirm"
 
-    fun setupBarcode(code: BluetoothScannerSetupCode): String =
-        "${SETUP_BARCODE}_${code.accessibilityId}"
+    /**
+     * Per-page tags are derived from the step id, not from the code: the two
+     * `EnterSet` pages and the two `ExitSave` pages must stay distinguishable.
+     */
+    fun setupGuideStep(step: BluetoothScannerSetupStep): String =
+        "settings_setup_step_${step.accessibilityId}"
 
-    fun setupEnlarge(code: BluetoothScannerSetupCode): String =
-        "${SETUP_ENLARGE}_${code.accessibilityId}"
+    fun setupBarcode(step: BluetoothScannerSetupStep): String =
+        "${SETUP_BARCODE}_${step.accessibilityId}"
 
-    fun setupFullscreenBarcode(code: BluetoothScannerSetupCode): String =
-        "${SETUP_FULLSCREEN_BARCODE}_${code.accessibilityId}"
+    fun setupEnlarge(step: BluetoothScannerSetupStep): String =
+        "${SETUP_ENLARGE}_${step.accessibilityId}"
+
+    fun setupFullscreenBarcode(step: BluetoothScannerSetupStep): String =
+        "${SETUP_FULLSCREEN_BARCODE}_${step.accessibilityId}"
 }
 
 /**
