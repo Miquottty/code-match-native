@@ -400,6 +400,15 @@ struct SettingsScreen: View {
                         // 押せなくするのは、このスキャナーへ接続している最中だけ。
                         .disabled(bluetoothScanner.connectingDeviceID == knownDevice.id)
                         .accessibilityIdentifier("knownScannerReconnectButton")
+                        // 切断を押した後は自動で再接続しない（#137）。画面が止まって見えないよう、
+                        // 待っていてもつながらないことを伝える。
+                        if bluetoothScanner.automaticReconnectIsPaused {
+                            Text("このスキャナには自動で再接続しません。使うときは上のボタンを押してください。")
+                                .font(.caption2)
+                                .foregroundStyle(AppTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("knownScannerReconnectPausedHint")
+                        }
                     }
 
                     Button {

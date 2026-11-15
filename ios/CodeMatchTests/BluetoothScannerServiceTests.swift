@@ -1048,6 +1048,28 @@ final class BluetoothScannerServiceTests: XCTestCase {
         XCTAssertEqual(service.tuningState, .unknown)
     }
 
+    func testAutomaticReconnectIsPausedOnlyAfterTheOperatorDisconnects() {
+        let defaults = isolatedDefaults()
+        let service = BluetoothScannerService(defaults: defaults)
+        // 覚えているスキャナーがなければ、案内するものがない。
+        XCTAssertFalse(service.automaticReconnectIsPaused)
+
+        service.startDiscovery()
+        service.connect(service.devices[0])
+        XCTAssertFalse(service.automaticReconnectIsPaused)
+
+        // 切断を押すと、覚えたまま自動再接続をやめる（#137）。起動し直しても同じ。
+        service.disconnect()
+        XCTAssertNotNil(service.reconnectableDevice)
+        XCTAssertTrue(service.automaticReconnectIsPaused)
+        XCTAssertTrue(BluetoothScannerService(defaults: defaults).automaticReconnectIsPaused)
+
+        // 作業者がつなぎ直せば解除される。
+        service.reconnectKnownDevice()
+        XCTAssertTrue(service.isConnected)
+        XCTAssertFalse(service.automaticReconnectIsPaused)
+    }
+
     func testDiagnosticLogKeepsRecentEventsAndOmitsPayloads() throws {
         let defaults = isolatedDefaults()
         let service = BluetoothScannerService(defaults: defaults)

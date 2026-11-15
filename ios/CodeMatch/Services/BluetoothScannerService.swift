@@ -373,6 +373,17 @@ final class BluetoothScannerService: NSObject, ObservableObject {
         if case .connecting(let device) = state { return device.id }
         return nil
     }
+    /// 以前接続したスキャナーを覚えているが、自動では再接続しない状態（#137）。作業者が
+    /// 切断した後がこれに当たり、次に作業者が接続するまで続く。設定画面は、何も起きない
+    /// 理由をこの値で案内する。
+    var automaticReconnectIsPaused: Bool {
+        guard !isConnected, !isConnecting, reconnectableDevice != nil else { return false }
+#if INATECK_SDK
+        // GATTモードへの切替中は、切替先を自動で探して接続する。
+        guard gattSwitchOrigin == nil else { return false }
+#endif
+        return defaults.string(forKey: Self.preferredDeviceIDKey)?.isEmpty != false
+    }
     var reconnectableDevice: BluetoothScannerDevice? {
         guard let id = defaults.string(forKey: Self.lastKnownDeviceIDKey), !id.isEmpty else {
             return nil

@@ -1710,6 +1710,22 @@
         }
       }
     },
+    "このスキャナには自動で再接続しません。使うときは上のボタンを押してください。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This scanner is not reconnected automatically. Tap the button above when you want to use it."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このスキャナには自動で再接続しません。使うときは上のボタンを押してください。"
+          }
+        }
+      }
+    },
     "このセッションではまだ一致したコードがありません。" : {
       "localizations" : {
         "en" : {
