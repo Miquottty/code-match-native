@@ -14,8 +14,8 @@ data class ReportMail(
 /**
  * Builds the pre-filled e-mail for sharing a session's PDF.
  *
- * The recipient is fixed for now: the report is only ever sent to the
- * operator's own mailbox. The body repeats the report header (session,
+ * The recipient is fixed: the report is only ever sent to the
+ * 澤井製作所 address below. The body repeats the report header (session,
  * destination, box and row counts) so the mail is readable without opening
  * the attachment. Sending itself stays with the mail app the operator uses.
  *
@@ -23,7 +23,7 @@ data class ReportMail(
  */
 object ReportMailContent {
     /** The one address every report mail is addressed to. */
-    const val RECIPIENT: String = "takemoto1075@icloud.com"
+    const val RECIPIENT: String = "sizai@sawai-seisakusho.co.jp"
 
     val recipients: Array<String>
         get() = arrayOf(RECIPIENT)

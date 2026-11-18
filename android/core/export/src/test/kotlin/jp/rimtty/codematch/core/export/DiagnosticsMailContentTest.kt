@@ -32,7 +32,7 @@ class DiagnosticsMailContentTest {
             DiagnosticsMailContent.recipients.toList(),
         )
         assertNotEquals(ReportMailContent.RECIPIENT, DiagnosticsMailContent.RECIPIENT)
-        assertEquals("takemoto1075@icloud.com", ReportMailContent.RECIPIENT)
+        assertEquals("sizai@sawai-seisakusho.co.jp", ReportMailContent.RECIPIENT)
     }
 
     @Test

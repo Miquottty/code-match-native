@@ -9,7 +9,7 @@ final class ReportMailContentTests: XCTestCase {
     private let locale = Locale(identifier: "ja_JP")
 
     func testRecipientIsTheFixedOperatorAddress() {
-        XCTAssertEqual(ReportMailContent.recipients, ["takemoto1075@icloud.com"])
+        XCTAssertEqual(ReportMailContent.recipients, ["sizai@sawai-seisakusho.co.jp"])
     }
 
     func testInspectionMailRepeatsTheReportHeaderAndNamesTheAttachment() {

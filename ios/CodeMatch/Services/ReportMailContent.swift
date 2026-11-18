@@ -8,12 +8,12 @@ enum ReportKind {
 
 /// レポートPDFをメールで共有するときの宛先・件名・本文。
 ///
-/// 宛先は当面固定で、レポートは操作者自身の受信箱にだけ送る。本文にはレポートの見出し
+/// 宛先は固定で、レポートは澤井製作所のアドレスにだけ送る。本文にはレポートの見出し
 /// （セッション、仕向地、箱数・行数）を繰り返し、添付を開かなくても内容が分かるようにする。
 /// 送信そのものは操作者が使うメールアプリに任せる。Android の `ReportMailContent` と同じ規則。
 struct ReportMailContent: Equatable {
     /// すべてのレポートメールの宛先。
-    static let recipients = ["takemoto1075@icloud.com"]
+    static let recipients = ["sizai@sawai-seisakusho.co.jp"]
 
     let subject: String
     let body: String
