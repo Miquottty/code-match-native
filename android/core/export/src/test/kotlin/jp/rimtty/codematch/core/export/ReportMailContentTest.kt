@@ -19,8 +19,8 @@ class ReportMailContentTest {
 
     @Test
     fun recipientIsTheFixedOperatorAddress() {
-        assertEquals("takemoto1075@icloud.com", ReportMailContent.RECIPIENT)
-        assertEquals(listOf("takemoto1075@icloud.com"), ReportMailContent.recipients.toList())
+        assertEquals("sizai@sawai-seisakusho.co.jp", ReportMailContent.RECIPIENT)
+        assertEquals(listOf("sizai@sawai-seisakusho.co.jp"), ReportMailContent.recipients.toList())
     }
 
     @Test

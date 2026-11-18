@@ -20,7 +20,7 @@ data class DiagnosticsMail(
  * Only identification and status labels go into the subject and body: the
  * attached diagnostics are payload-free, no scan value, scan log or scanner
  * MAC address is added here. The recipient is deliberately separate from
- * [ReportMailContent.RECIPIENT], which must not change.
+ * [ReportMailContent.RECIPIENT].
  */
 object DiagnosticsMailContent {
     /** Where diagnostics are sent; not the report recipient. */
