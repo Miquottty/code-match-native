@@ -9,6 +9,7 @@ import java.time.Instant
 import java.time.ZoneId
 import jp.rimtty.codematch.core.export.BluetoothDiagnosticsExporter
 import jp.rimtty.codematch.core.export.DiagnosticsMailContent
+import jp.rimtty.codematch.core.export.ScanLogMailContent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -115,5 +116,55 @@ class DiagnosticsMailBridgeTest {
         } finally {
             file.delete()
         }
+    }
+
+    @Test
+    fun scanLogGoesToTheAdministratorAsAnAttachmentAndNeverAsMailText() {
+        val scanLogMail = ScanLogMailContent.build(
+            summary = ScanLogMailContent.Summary(
+                versionName = "0.1.6",
+                versionCode = 7,
+                deviceModel = "SC-53F",
+                system = "Android 16 (API 36)",
+                eventCount = 12,
+            ),
+            exportedAt = Instant.parse("2026-11-20T07:44:00Z"),
+            zoneId = ZoneId.of("Asia/Tokyo"),
+        )
+        val uri = Uri.parse(
+            "content://${context.packageName}.fileprovider/history_export/${scanLogMail.fileName}",
+        )
+        val file = File(context.cacheDir, scanLogMail.fileName)
+        val fileShare = Intent(Intent.ACTION_CHOOSER)
+
+        val intent = requireNotNull(
+            DiagnosticsMailBridge.createScanLogIntent(file, scanLogMail, { fileShare }, { uri }, { true }),
+        )
+        assertEquals(Intent.ACTION_SEND, intent.action)
+        assertNull(intent.type)
+        assertEquals(
+            listOf("contact-codematch@googlegroups.com"),
+            intent.getStringArrayExtra(Intent.EXTRA_EMAIL)?.toList(),
+        )
+        assertEquals(scanLogMail.subject, intent.getStringExtra(Intent.EXTRA_SUBJECT))
+        assertEquals(scanLogMail.body, intent.getStringExtra(Intent.EXTRA_TEXT))
+        @Suppress("DEPRECATION")
+        assertEquals(uri, intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
+        assertEquals("mailto", intent.selector?.data?.scheme)
+
+        // No mail app, or no attachment URI: the previous file share.
+        assertEquals(
+            fileShare,
+            DiagnosticsMailBridge.createScanLogIntent(file, scanLogMail, { fileShare }, { uri }, { false }),
+        )
+        assertEquals(
+            fileShare,
+            DiagnosticsMailBridge.createScanLogIntent(
+                file, scanLogMail, { fileShare }, { error("no root") }, { true },
+            ),
+        )
+        assertNull(
+            DiagnosticsMailBridge.createScanLogIntent(file, scanLogMail, { null }, { uri }, { false }),
+        )
     }
 }

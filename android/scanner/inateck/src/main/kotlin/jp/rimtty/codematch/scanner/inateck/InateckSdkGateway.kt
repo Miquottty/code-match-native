@@ -94,6 +94,12 @@ internal interface InateckSdkGateway {
     fun reportedDataModes(): InateckDataModes? = null
 
     /**
+     * The read-quality settings the last tuning read reported, as the
+     * diagnostics line [InateckTuningSettings.diagnosticValuesLine] builds.
+     */
+    fun reportedTuningValuesLine(): String? = null
+
+    /**
      * Receives the connect-time Bluetooth-mode check (#137). Before the link
      * is reported connected, the gateway reads the settings; a scanner that is
      * not in GATT mode is switched with [InateckGattMode.SWITCH_COMMAND],

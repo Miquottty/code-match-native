@@ -102,6 +102,34 @@ internal object InateckTuningSettings {
         REQUIRED_NAMES.all { required -> inventory.any { it["name"] == required } }
 
     private val REQUIRED_NAMES = listOf("qrcode_on", "code128_on")
+
+    /**
+     * Settings that bear on read quality and the buffer, printed with the
+     * values the scanner reported before anything was written. The names and
+     * the line are the ones iOS traces (`tuningSettingNames`), so logs of both
+     * platforms compare directly. Only integer values of these names are
+     * printed: no prefix/suffix text, no identifier, nothing that was scanned.
+     */
+    private val DIAGNOSTIC_NAMES = setOf(
+        "lighting_lamp_control", "positioning_lamp_control", "position_light_twinkle",
+        "qrcode_read_more_code", "datamatrix_read_multi", "pdf417_read_more_code",
+        "read_inverse_color", "qrcode_read_phase", "datamatrix_read_phase",
+        "hanxin_read_phase", "pdf417_read_phase",
+        "scan_mode", "auto_close_mode", "time_auto_off", "time_continuous_mode", "auto_off",
+        "auto_sense_distan", "security_level", "repeat_data_check_on", "ignore_short_bar",
+        "data_transmission_speed", "inventory_mode", "auto_upload_cache", "start_up_clean_cache",
+        "d_click_upload_flag", "dclick_upload_flag",
+    )
+
+    /** `Scanner tuning values: auto_close_mode=20,…`, or null when none is reported. */
+    fun diagnosticValuesLine(inventory: List<Map<String, String>>): String? {
+        val values = inventory.mapNotNull { entry ->
+            val name = entry["name"]?.takeIf { it in DIAGNOSTIC_NAMES } ?: return@mapNotNull null
+            val value = entry["value"]?.toIntOrNull() ?: return@mapNotNull null
+            "$name=$value"
+        }.distinct().sorted()
+        return if (values.isEmpty()) null else "Scanner tuning values: " + values.joinToString(",")
+    }
 }
 
 /** [INCOMPLETE]: the inventory read came back empty or partial; ask again later. */

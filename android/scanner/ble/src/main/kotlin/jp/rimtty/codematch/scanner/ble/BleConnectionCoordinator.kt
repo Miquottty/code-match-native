@@ -407,6 +407,10 @@ class BleConnectionCoordinator(
         return true
     }
 
+    /** One printable line of at most 40 characters, or null for a blank name. */
+    private fun diagnosticName(name: String?): String? =
+        name?.replace(Regex("[\\p{Cntrl}\\s]+"), " ")?.trim()?.take(40)?.takeIf { it.isNotEmpty() }
+
     /** Append a payload-free adapter diagnostic and publish it. */
     fun recordDiagnostic(message: String, error: Boolean = false) {
         if (error) diagnostics.error(message) else diagnostics.connection(message)
@@ -564,11 +568,16 @@ class BleConnectionCoordinator(
                 reconnectAttempt = 0
                 reconnectAtMillis = null
                 payloadGate.reset()
+                // Recorded before the transition so the published state carries it.
+                // The advertised name tells the units apart in a mailed log
+                // (`HPRT-636E`); the address stays out of the diagnostics.
+                diagnostics.connection(
+                    "Scanner connected" + diagnosticName(event.device.name)?.let { ": $it" }.orEmpty(),
+                )
                 transition(
                     connection = BleConnectionState.Connected(event.device),
                     configuration = ConfigurationState.Configuring,
                 )
-                diagnostics.connection("Scanner connected")
             }
             is BleTransportEvent.ConnectionFailed -> {
                 if (!acceptConnectionFailureEvent(event)) return

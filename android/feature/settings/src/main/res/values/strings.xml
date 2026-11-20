@@ -138,7 +138,7 @@
     <string name="settings_tuning_matched">読取チューニング: 確認済み（変更なし）</string>
     <string name="settings_tuning_applied">読取チューニング: 適用済み（多コードOFF・反転OFF・赤光4秒）</string>
     <string name="settings_tuning_failed">読取チューニングを確認できませんでした。スキャナーを再接続してください。</string>
-    <string name="settings_diagnostics_note">直近1,000件を保持し、ここには直近20件を新しい順に表示します。読み取った値は含まれません。</string>
+    <string name="settings_diagnostics_note">直近2,000件まで保持し、ここには直近20件を新しい順に表示します。読み取った値は含まれません。</string>
     <string name="settings_diagnostics_share">診断ログを管理者へ送る</string>
     <string name="settings_diagnostics_save">診断ログを保存</string>
     <string name="settings_diagnostics_subject">CodeMatch Bluetooth診断ログ</string>

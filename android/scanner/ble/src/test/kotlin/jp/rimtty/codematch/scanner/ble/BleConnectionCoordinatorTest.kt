@@ -64,6 +64,19 @@ class BleConnectionCoordinatorTest {
     }
 
     @Test
+    fun connectedDiagnosticNamesTheScannerButNeverItsAddress() {
+        val transport = RecordingTransport()
+        val coordinator = BleConnectionCoordinator(transport, nowMillis = { 0L })
+        val named = ScannerDevice(id = "AA:BB:CC:DD:63:6E", name = "HPRT-636E")
+        coordinator.connect(named)
+        transport.emit(BleTransportEvent.Connected(named))
+
+        val messages = coordinator.state.diagnostics.map { it.message }
+        assertEquals("Scanner connected: HPRT-636E", messages.last())
+        assertTrue(messages.none { it.contains(named.id) })
+    }
+
+    @Test
     fun scanPayloadIsForwardedButNeverWrittenToDiagnostics() {
         val transport = RecordingTransport()
         val coordinator = BleConnectionCoordinator(transport, nowMillis = { 0L })
