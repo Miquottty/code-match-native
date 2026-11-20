@@ -103,12 +103,20 @@ struct SettingsScreen: View {
     private let player = FeedbackPlayer.shared
     @State private var showsScannerSetupGuide = false
     @State private var scanLogShareItem: ScanLogShareItem?
+    @State private var scanLogMailItem: ScanLogMailItem?
     @State private var showsScanLogExportError = false
     @State private var showsScanLogClearConfirmation = false
 
     private struct ScanLogShareItem: Identifiable {
         let id = UUID()
         let url: URL
+    }
+
+    /// 照合ログを管理者へ送るメール作成画面。添付は書き出したJSONLそのもの。
+    private struct ScanLogMailItem: Identifiable {
+        let id = UUID()
+        let content: ScanLogMailContent
+        let data: Data
     }
 
     /// 診断ログを管理者へ送るメール作成画面（#143）。
@@ -229,6 +237,21 @@ struct SettingsScreen: View {
             ActivityShareSheet(items: [item.text])
                 .presentationDetents([.medium, .large])
         }
+        .sheet(item: $scanLogMailItem) { item in
+            MailComposeView(
+                recipients: ScanLogMailContent.recipients,
+                subject: item.content.subject,
+                body: item.content.body,
+                attachment: MailComposeView.Attachment(
+                    data: item.data,
+                    fileName: item.content.fileName,
+                    mimeType: "text/plain"
+                )
+            ) {
+                scanLogMailItem = nil
+            }
+            .ignoresSafeArea()
+        }
         .sheet(item: $scanLogShareItem) { item in
             ActivityShareSheet(items: [item.url])
                 .presentationDetents([.medium, .large])
@@ -331,9 +354,27 @@ struct SettingsScreen: View {
         )
     }
 
-    /// ヘッダ行つきのJSONLを一時ファイルへ書き出して共有シートに渡す。
+    /// ヘッダ行つきのJSONLを添付し、宛先・件名・本文を埋めたメール作成画面を開く（診断ログと同じ管理者宛て）。
+    /// 「メール」にアカウントがない端末では、従来どおり一時ファイルへ書き出して共有シートに渡す。
     private func shareScanLog() {
         guard scanLog.eventCount > 0 else { return }
+        if MailComposeView.canSendMail {
+            let exportedAt = Date()
+            let info = Bundle.main.infoDictionary ?? [:]
+            let version = info["CFBundleShortVersionString"] as? String ?? "?"
+            let build = info["CFBundleVersion"] as? String ?? "?"
+            scanLogMailItem = ScanLogMailItem(
+                content: ScanLogMailContent.make(
+                    appVersion: "\(version) (\(build))",
+                    device: "\(UIDevice.current.model) / iOS \(UIDevice.current.systemVersion)",
+                    eventCount: scanLog.eventCount,
+                    fileName: ScanLogStore.fileName(exportedAt: exportedAt),
+                    exportedAt: exportedAt
+                ),
+                data: Data(scanLog.exportText(exportedAt: exportedAt).utf8)
+            )
+            return
+        }
         do {
             scanLogShareItem = ScanLogShareItem(url: try scanLog.writeTemporaryExport())
         } catch {

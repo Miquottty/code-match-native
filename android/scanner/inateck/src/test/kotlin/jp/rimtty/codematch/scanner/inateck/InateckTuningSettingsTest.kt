@@ -143,4 +143,27 @@ class InateckTuningSettingsTest {
         val notANumber = listOf(item("auto_close_mode", "x"))
         assertTrue(InateckTuningSettings.present(notANumber).isEmpty())
     }
+
+    @Test
+    fun diagnosticValuesLineListsOnlyTheReadQualityIntegersInTheIosWording() {
+        val inventory = listOf(
+            mapOf("area" to "1", "name" to "qrcode_on", "value" to "1"),
+            mapOf("area" to "2", "name" to "lighting_lamp_control", "value" to "2"),
+            mapOf("area" to "3", "name" to "auto_close_mode", "value" to "20"),
+            mapOf("area" to "4", "name" to "scan_mode", "value" to "0"),
+            // Text settings and names outside the list never reach the log.
+            mapOf("area" to "5", "name" to "prefix", "value" to "ABC"),
+            mapOf("area" to "6", "name" to "security_level", "value" to "not-a-number"),
+        )
+        assertEquals(
+            "Scanner tuning values: auto_close_mode=20,lighting_lamp_control=2,scan_mode=0",
+            InateckTuningSettings.diagnosticValuesLine(inventory),
+        )
+        assertEquals(
+            null,
+            InateckTuningSettings.diagnosticValuesLine(
+                listOf(mapOf("area" to "1", "name" to "qrcode_on", "value" to "1")),
+            ),
+        )
+    }
 }

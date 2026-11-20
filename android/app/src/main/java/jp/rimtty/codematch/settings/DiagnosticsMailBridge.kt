@@ -8,6 +8,7 @@ import androidx.core.content.FileProvider
 import java.io.File
 import jp.rimtty.codematch.core.export.DiagnosticsMail
 import jp.rimtty.codematch.core.export.DiagnosticsMailContent
+import jp.rimtty.codematch.core.export.ScanLogMailContent
 
 /**
  * Hands the Bluetooth diagnostics to the administrator by e-mail (#143).
@@ -71,9 +72,13 @@ internal object DiagnosticsMailBridge {
      * Gmail, 2026-11-15). The mail app reads the attachment's type from the
      * content URI.
      */
-    internal fun createMailIntent(uri: Uri, mail: DiagnosticsMail): Intent =
+    internal fun createMailIntent(
+        uri: Uri,
+        mail: DiagnosticsMail,
+        recipients: Array<String> = DiagnosticsMailContent.recipients,
+    ): Intent =
         Intent(Intent.ACTION_SEND).apply {
-            putExtra(Intent.EXTRA_EMAIL, DiagnosticsMailContent.recipients)
+            putExtra(Intent.EXTRA_EMAIL, recipients)
             putExtra(Intent.EXTRA_SUBJECT, mail.subject)
             putExtra(Intent.EXTRA_TEXT, mail.body)
             putExtra(Intent.EXTRA_STREAM, uri)
@@ -81,6 +86,43 @@ internal object DiagnosticsMailBridge {
             clipData = ClipData.newRawUri(null, uri)
             selector = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:"))
         }
+
+    /**
+     * The scan log goes to the administrator the same way: a mail with the
+     * JSON Lines export attached. The scan log holds scanned values, so it is
+     * never put into the mail text; with no mail app (or no attachment URI)
+     * [fallback] supplies the previous file share, and null means the export
+     * cannot leave the device at all.
+     */
+    fun createScanLogIntent(
+        context: Context,
+        file: File,
+        mail: DiagnosticsMail,
+        fallback: () -> Intent?,
+    ): Intent? = createScanLogIntent(
+        file = file,
+        mail = mail,
+        fallback = fallback,
+        uriForFile = { current ->
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", current)
+        },
+        hasMailApp = { intent ->
+            runCatching { context.packageManager.queryIntentActivities(intent, 0).isNotEmpty() }
+                .getOrDefault(false)
+        },
+    )
+
+    internal fun createScanLogIntent(
+        file: File,
+        mail: DiagnosticsMail,
+        fallback: () -> Intent?,
+        uriForFile: (File) -> Uri,
+        hasMailApp: (Intent) -> Boolean,
+    ): Intent? {
+        val mailIntent = runCatching { uriForFile(file) }.getOrNull()
+            ?.let { createMailIntent(it, mail, ScanLogMailContent.recipients) }
+        return if (mailIntent != null && hasMailApp(mailIntent)) mailIntent else fallback()
+    }
 
     /** The previous behaviour: share the diagnostics text through any app. */
     internal fun createShareChooser(subject: String, diagnosticsText: String): Intent {

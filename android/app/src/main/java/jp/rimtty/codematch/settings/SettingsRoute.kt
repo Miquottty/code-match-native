@@ -21,6 +21,7 @@ import java.time.Instant
 import jp.rimtty.codematch.core.export.BluetoothDiagnosticsExporter
 import jp.rimtty.codematch.core.export.DiagnosticsMailContent
 import jp.rimtty.codematch.core.export.ScanLogJsonExporter
+import jp.rimtty.codematch.core.export.ScanLogMailContent
 import jp.rimtty.codematch.history.HistoryJsonBridge
 import jp.rimtty.codematch.history.HistoryJsonResult
 import jp.rimtty.codematch.feature.settings.DiagnosticLogFormatter
@@ -116,28 +117,44 @@ fun SettingsRoute(
         onAction = { action ->
             when (action) {
                 SettingsUiAction.ShareScanLog -> scope.launch {
+                    // Like the diagnostics: open a mail pre-filled for the
+                    // administrator with the export attached; the operator
+                    // taps Send. Falls back to the previous file share.
                     val exportedAt = Instant.now()
-                    val file = withContext(Dispatchers.IO) {
-                        runCatching {
-                            ScanLogJsonExporter.writeToCache(
-                                context = context,
-                                text = scanLogText(context, viewModel.exportScanLog(), exportedAt),
-                                exportedAt = exportedAt,
-                            )
-                        }.getOrNull()
+                    val events = withContext(Dispatchers.IO) {
+                        runCatching { viewModel.exportScanLog() }.getOrNull()
                     }
-                    val chooser = file?.let {
-                        HistoryJsonBridge.createShareChooser(
+                    val file = events?.let {
+                        withContext(Dispatchers.IO) {
+                            runCatching {
+                                ScanLogJsonExporter.writeToCache(
+                                    context = context,
+                                    text = scanLogText(context, it, exportedAt),
+                                    exportedAt = exportedAt,
+                                )
+                            }.getOrNull()
+                        }
+                    }
+                    val intent = file?.let {
+                        DiagnosticsMailBridge.createScanLogIntent(
                             context = context,
                             file = it,
-                            mimeType = ScanLogJsonExporter.MIME_TYPE,
+                            mail = ScanLogMailContent.build(
+                                summary = scanLogMailSummary(context, events?.size ?: 0),
+                                exportedAt = exportedAt,
+                            ),
+                            fallback = {
+                                val chooser = HistoryJsonBridge.createShareChooser(
+                                    context = context,
+                                    file = it,
+                                    mimeType = ScanLogJsonExporter.MIME_TYPE,
+                                )
+                                (chooser as? HistoryJsonResult.Success)?.value
+                            },
                         )
                     }
-                    val launched = when (chooser) {
-                        is HistoryJsonResult.Success ->
-                            runCatching { context.startActivity(chooser.value) }.isSuccess
-                        else -> false
-                    }
+                    val launched = intent != null &&
+                        runCatching { context.startActivity(intent) }.isSuccess
                     if (!launched) {
                         Toast.makeText(
                             context,
@@ -216,6 +233,17 @@ private fun scanLogText(
         exportedAt = exportedAt,
     ),
 )
+
+private fun scanLogMailSummary(context: Context, eventCount: Int): ScanLogMailContent.Summary {
+    val (versionName, versionCode) = appVersion(context)
+    return ScanLogMailContent.Summary(
+        versionName = versionName,
+        versionCode = versionCode,
+        deviceModel = Build.MODEL,
+        system = systemLabel(),
+        eventCount = eventCount,
+    )
+}
 
 private fun appVersion(context: Context): Pair<String, Long> {
     val packageInfo = runCatching {

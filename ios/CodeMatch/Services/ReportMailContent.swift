@@ -136,3 +136,52 @@ struct DiagnosticsMailContent: Equatable {
         )
     }
 }
+
+/// 照合ログを管理者へ送るメールの宛先・件名・本文・添付ファイル名。
+///
+/// 診断ログ（`DiagnosticsMailContent`）と同じ宛先・同じ流儀で、自動送信はしない。
+/// 添付のJSONLは読み取った値を含むので、本文でそのことを伝える。件名と本文には値を入れない。
+struct ScanLogMailContent: Equatable {
+    /// 診断ログと同じ管理者宛て。
+    static let recipients = DiagnosticsMailContent.recipients
+
+    let subject: String
+    let body: String
+    let fileName: String
+
+    /// `fileName` は添付する書き出し（`ScanLogStore.fileName(exportedAt:)`）の名前。
+    static func make(
+        appVersion: String,
+        device: String,
+        eventCount: Int,
+        fileName: String,
+        exportedAt: Date,
+        timeZone: TimeZone = .current
+    ) -> ScanLogMailContent {
+        let stamp = DateFormatter()
+        stamp.calendar = Calendar(identifier: .gregorian)
+        stamp.locale = Locale(identifier: "en_US_POSIX")
+        stamp.timeZone = timeZone
+        stamp.dateFormat = "yyyy/MM/dd HH:mm"
+
+        let subject = AppLocalization.string("CodeMatch 照合ログ")
+            + " \(appVersion) \(device) \(stamp.string(from: exportedAt))"
+        let lines = [
+            AppLocalization.string("CodeMatch の照合ログをお送りします。"),
+            "",
+            AppLocalization.string("アプリ: \(appVersion)"),
+            AppLocalization.string("端末: \(device)"),
+            AppLocalization.string("記録: \(eventCount)件"),
+            "",
+            AppLocalization.string("■ 添付"),
+            fileName,
+            "",
+            AppLocalization.string("読み取ったコードの内容が含まれています。"),
+        ]
+        return ScanLogMailContent(
+            subject: subject,
+            body: lines.joined(separator: "\n"),
+            fileName: fileName
+        )
+    }
+}

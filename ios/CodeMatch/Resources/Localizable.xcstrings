@@ -6505,6 +6505,54 @@
         }
       }
     },
+    "CodeMatch 照合ログ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CodeMatch scan log"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CodeMatch 照合ログ"
+          }
+        }
+      }
+    },
+    "CodeMatch の照合ログをお送りします。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Here is the CodeMatch scan log."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CodeMatch の照合ログをお送りします。"
+          }
+        }
+      }
+    },
+    "読み取ったコードの内容が含まれています。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The contents of scanned codes are included."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "読み取ったコードの内容が含まれています。"
+          }
+        }
+      }
+    },
     "CodeMatch の Bluetooth 診断ログをお送りします。" : {
       "localizations" : {
         "en" : {

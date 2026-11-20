@@ -44,6 +44,7 @@ internal class AndroidInateckSdkGateway(
     private var versionReply: InateckVersionReply? = null
     private var cacheOperation: Long? = null
     private var dataModes: InateckDataModes? = null
+    private var tuningValuesLine: String? = null
     private var disconnectingDevice: BleScannerDevice? = null
     private var closed = false
     private var gattModeListener: ((InateckGattModeEvent) -> Unit)? = null
@@ -146,6 +147,7 @@ internal class AndroidInateckSdkGateway(
             pendingDevice = null
             activeDevice = device
             dataModes = null
+            tuningValuesLine = null
             versionReply = null
             if (!connectCompletionDelivered) {
                 connectCompletionDelivered = true
@@ -695,6 +697,7 @@ internal class AndroidInateckSdkGateway(
                         return@dispatch
                     }
                     dataModes = InateckDataModes.from(inventory)
+                    tuningValuesLine = InateckTuningSettings.diagnosticValuesLine(inventory)
                     if (InateckTuningSettings.present(inventory).isEmpty()) {
                         finish(InateckTuningOutcome.UNSUPPORTED)
                         return@dispatch
@@ -869,6 +872,8 @@ internal class AndroidInateckSdkGateway(
     }
 
     override fun reportedDataModes(): InateckDataModes? = dataModes
+
+    override fun reportedTuningValuesLine(): String? = tuningValuesLine
 
     override fun setGattModeListener(listener: ((InateckGattModeEvent) -> Unit)?) {
         gattModeListener = listener
@@ -1079,6 +1084,7 @@ internal class AndroidInateckSdkGateway(
         versionReply = null
         activeDevice = null
         dataModes = null
+        tuningValuesLine = null
         pendingDevice = null
         activeScanBytes = null
         activeDisconnect = null

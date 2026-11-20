@@ -103,4 +103,49 @@ final class ReportMailContentTests: XCTestCase {
         XCTAssertTrue(mail.body.contains("復元待ちのスキャナ: 1台"))
         XCTAssertTrue(mail.body.contains("■ 添付\ncodematch-bluetooth-diagnostics-20260927-2230.txt"))
     }
+
+    func testScanLogMailGoesToTheAdministratorAndWarnsAboutScannedValues() {
+        let original = UserDefaults.standard.string(forKey: AppLanguage.storageKey)
+        UserDefaults.standard.set(AppLanguage.japanese.rawValue, forKey: AppLanguage.storageKey)
+        defer {
+            if let original {
+                UserDefaults.standard.set(original, forKey: AppLanguage.storageKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: AppLanguage.storageKey)
+            }
+        }
+        let tokyo = TimeZone(identifier: "Asia/Tokyo")!
+        // 2026-09-27 22:30 JST
+        let exportedAt = Date(timeIntervalSince1970: 1_790_515_800)
+
+        let mail = ScanLogMailContent.make(
+            appVersion: "1.0 (15)",
+            device: "iPhone / iOS 26.6.2",
+            eventCount: 1234,
+            fileName: "codematch-scan-log-20260927-2230.jsonl",
+            exportedAt: exportedAt,
+            timeZone: tokyo
+        )
+
+        XCTAssertEqual(ScanLogMailContent.recipients, ["contact-codematch@googlegroups.com"])
+        XCTAssertNotEqual(ScanLogMailContent.recipients, ReportMailContent.recipients)
+        XCTAssertEqual(mail.subject, "CodeMatch 照合ログ 1.0 (15) iPhone / iOS 26.6.2 2026/09/27 22:30")
+        XCTAssertEqual(mail.fileName, "codematch-scan-log-20260927-2230.jsonl")
+        XCTAssertEqual(
+            mail.body,
+            [
+                "CodeMatch の照合ログをお送りします。",
+                "",
+                "アプリ: 1.0 (15)",
+                "端末: iPhone / iOS 26.6.2",
+                // 件数は設定画面の件数表示と同じ書式（桁区切りあり）。
+                "記録: 1,234件",
+                "",
+                "■ 添付",
+                "codematch-scan-log-20260927-2230.jsonl",
+                "",
+                "読み取ったコードの内容が含まれています。",
+            ].joined(separator: "\n")
+        )
+    }
 }

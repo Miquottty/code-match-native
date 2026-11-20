@@ -18,6 +18,7 @@ import jp.rimtty.codematch.scanner.api.TuningState
 import jp.rimtty.codematch.scanner.api.ScannerDevice
 import jp.rimtty.codematch.scanner.api.ScannerFailureReasons
 import jp.rimtty.codematch.scanner.ble.BleConnectionCoordinator
+import jp.rimtty.codematch.scanner.ble.BleDiagnosticLog
 import jp.rimtty.codematch.scanner.ble.BleKnownDeviceStore
 import jp.rimtty.codematch.scanner.ble.BleScannerSessionCoordinator
 import jp.rimtty.codematch.scanner.ble.BleSessionCoordinatorFactory
@@ -108,6 +109,11 @@ class InateckExternalScanner private constructor(
     private fun publishIllumination(state: IlluminationState) {
         if (illuminationState == state) return
         illuminationState = state
+        // The settled result of each connection, so a mailed log shows whether
+        // the lamp setting really took (the header only has the last state).
+        illuminationDiagnostic(state)?.let { (message, error) ->
+            connection.recordDiagnostic(message, error)
+        }
         (illuminationObservers.toList() + listOfNotNull(listener)).distinct().forEach {
             it.onIlluminationStateChanged(state)
         }
@@ -116,9 +122,28 @@ class InateckExternalScanner private constructor(
     private fun publishTuning(state: TuningState) {
         if (tuningState == state) return
         tuningState = state
+        tuningDiagnostic(state)?.let { (message, error) ->
+            connection.recordDiagnostic(message, error)
+        }
         (illuminationObservers.toList() + listOfNotNull(listener)).distinct().forEach {
             it.onTuningStateChanged(state)
         }
+    }
+
+    private fun illuminationDiagnostic(state: IlluminationState): Pair<String, Boolean>? = when (state) {
+        IlluminationState.ON -> "Scanner illumination: on" to false
+        IlluminationState.OFF -> "Scanner illumination: off" to false
+        IlluminationState.UNSUPPORTED -> "Scanner illumination: unsupported" to false
+        IlluminationState.FAILED -> "Scanner illumination: failed" to true
+        else -> null
+    }
+
+    private fun tuningDiagnostic(state: TuningState): Pair<String, Boolean>? = when (state) {
+        TuningState.MATCHED -> "Scanner tuning: already matches" to false
+        TuningState.APPLIED -> "Scanner tuning: applied" to false
+        TuningState.UNSUPPORTED -> "Scanner tuning: unsupported" to false
+        TuningState.FAILED -> "Scanner tuning: failed" to true
+        else -> null
     }
 
     private fun resetTuning() {
@@ -246,6 +271,7 @@ class InateckExternalScanner private constructor(
                 // What the scanner reported before this tuning wrote anything,
                 // so a mailed log shows each model's own buffer settings (#155).
                 gateway.reportedDataModes()?.let { connection.recordDiagnostic(it.diagnosticLine()) }
+                gateway.reportedTuningValuesLine()?.let { connection.recordDiagnostic(it) }
                 drainDeferredSettings()
             }
         }
@@ -644,6 +670,10 @@ class InateckExternalScanner private constructor(
                 discoveryTimeoutMillis = 6_000L,
                 sustainedReconnectDelayMillis = 30_000L,
             )
+            // One configuration log for the whole process: a session is built
+            // per connection, and a log of its own would drop every earlier
+            // connection's setting events from the export.
+            val configurationDiagnostics = BleDiagnosticLog(nowMillis = nowMillis)
             val delegate = SelectableBleExternalScanner(
                 connectionCoordinator = connection,
                 sessionFactory = BleSessionCoordinatorFactory { device ->
@@ -658,6 +688,7 @@ class InateckExternalScanner private constructor(
                                 identity = INATECK_ANDROID_SDK_PROFILE_IDENTITY,
                             ),
                             snapshotStore = snapshotStore,
+                            diagnostics = configurationDiagnostics,
                             nowMillis = nowMillis,
                             // SDK 2.0.0 configures a 5-second FastBle timeout.
                             // setSettingInfo performs get/set/get and the
